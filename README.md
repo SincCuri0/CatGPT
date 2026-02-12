@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CatGPT
 
-## Getting Started
+CatGPT is a multi-agent, cat-themed chat workspace built on Next.js. Create and customize a "litter" of agents, keep separate chat histories per agent, and optionally enable voice (TTS/STT) for a more hands-free experience. The backend supports tool-augmented responses (filesystem, shell, web search) to enable agent workflows.
 
-First, run the development server:
+## Features
+- Multi-agent chat with editable personalities and roles
+- Conversation history with rename/delete and time-based grouping
+- Settings modal to manage your Groq API key
+- Optional TTS (Groq Orpheus or Edge) and STT (Groq Whisper)
+- Tool registry for filesystem, shell, and web search actions
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Tech Stack
+- Next.js 16 (App Router)
+- React 19
+- Tailwind CSS 4
+- Groq API (LLM + STT + optional TTS)
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Quick Start
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+2. Configure your API key:
+   - Create a `.env` file with:
+     ```bash
+     GROQ_API_KEY=your_key_here
+     ```
+   - Or set it in the UI via Settings (writes to `.env`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+3. Run the dev server:
+   ```bash
+   npm run dev
+   ```
 
-## Learn More
+Open `http://localhost:3000`.
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Run production server
+- `npm run lint` - Lint the codebase
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
+- `src/app` - Next.js routes, including API endpoints
+- `src/components` - UI components (chat, agents, settings)
+- `src/lib` - Core agent logic, tools, audio helpers
+- `public/audio` - Generated audio output
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Notes on Tools and Security
+Server-side tools include filesystem access, shell execution, and web search. This is intended for local development and controlled environments. Do not deploy these tools to untrusted environments without additional auth, sandboxing, and validation.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+TBD
