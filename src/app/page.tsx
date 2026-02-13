@@ -195,6 +195,24 @@ export default function CEODashboard() {
     }
   }, []);
 
+  // Warm ElevenLabs voices cache on app load so voice options are ready in editors.
+  useEffect(() => {
+    fetch("/api/elevenlabs/voices")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("voice cache warm failed"))))
+      .then((data) => {
+        if (Array.isArray(data.voices)) {
+          localStorage.setItem("cat_gpt_elevenlabs_voices", JSON.stringify(
+            data.voices.map((voice: { id: string; label: string; gender?: string }) => ({
+              id: voice.id,
+              label: voice.label,
+              desc: `${voice.gender || "neutral"} (ElevenLabs)`,
+            }))
+          ));
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   // Load ALL conversations on mount
   useEffect(() => {
     setConversations(loadConversations().sort((a, b) => b.updatedAt - a.updatedAt));

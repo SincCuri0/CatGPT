@@ -6,6 +6,20 @@ import { X, Shield, ShieldAlert, Key, Save, Cat, ExternalLink, Check } from "luc
 import { motion, AnimatePresence } from "framer-motion";
 import { PROVIDERS } from "@/lib/llm/constants";
 
+const API_KEY_PROVIDERS = [
+    ...PROVIDERS.map((provider) => ({ ...provider, envVar: provider.id === "google" ? "GEMINI_API_KEY" : `${provider.id.toUpperCase()}_API_KEY` })),
+    {
+        id: "elevenlabs",
+        name: "ElevenLabs",
+        description: "TTS provider",
+        defaultModel: "",
+        models: [],
+        requiresApiKey: true,
+        apiKeyLink: "https://elevenlabs.io/app/settings/api-keys",
+        envVar: "ELEVENLABS_API_KEY",
+    },
+];
+
 export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
     const { apiKeys, setProviderKey, serverConfiguredKeys, safeMode, setSafeMode } = useSettings();
     const [tempKeys, setTempKeys] = useState<Record<string, string>>({});
@@ -63,13 +77,8 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                             <div className="space-y-4">
                                 <h3 className="text-sm font-bold text-[#c0caf5] uppercase tracking-wider">API Providers</h3>
 
-                                {PROVIDERS.map(provider => {
-                                    const isEnvConfigured = serverConfiguredKeys[provider.id + "_API_KEY".toUpperCase()] || serverConfiguredKeys[provider.id.toUpperCase() + "_API_KEY"];
-                                    // Actually the server returns specific key names, let's just check the map from getAllApiKeys
-                                    // getAllApiKeys returns { GROQ_API_KEY: true, ... }
-                                    // We need to map provider.id to env var name
-                                    const envVarName = `${provider.id.toUpperCase()}_API_KEY`;
-                                    const isServerSet = serverConfiguredKeys[envVarName];
+                                {API_KEY_PROVIDERS.map(provider => {
+                                    const isServerSet = serverConfiguredKeys[provider.envVar];
 
                                     return (
                                         <div key={provider.id} className="space-y-2">

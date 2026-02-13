@@ -18,10 +18,11 @@ export async function GET() {
                 openai: await getEnvVariable("OPENAI_API_KEY"),
                 anthropic: await getEnvVariable("ANTHROPIC_API_KEY"),
                 google: await getEnvVariable("GEMINI_API_KEY"),
+                elevenlabs: await getEnvVariable("ELEVENLABS_API_KEY"),
             }
         });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e: unknown) {
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
     }
 }
 
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
                 openai: "OPENAI_API_KEY",
                 anthropic: "ANTHROPIC_API_KEY",
                 google: "GEMINI_API_KEY",
+                elevenlabs: "ELEVENLABS_API_KEY",
             };
 
             for (const [providerId, keyVal] of Object.entries(body.apiKeys)) {
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json({ success: true });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e: unknown) {
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
     }
 }
