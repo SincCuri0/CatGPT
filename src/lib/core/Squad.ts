@@ -1,4 +1,4 @@
-import { AgentConfig } from "./Agent";
+import { AgentConfig, AgentStyle } from "./Agent";
 
 export type SquadInteractionMode = "master_log" | "live_campaign";
 export type SquadUserTurnPolicy = "on_demand" | "every_round";
@@ -11,6 +11,14 @@ export interface SquadInteractionConfig {
     autoPlayCharacterVoices: boolean;
     typewriterCharacterMessages: boolean;
     userTurnPolicy: SquadUserTurnPolicy;
+}
+
+export interface SquadOrchestratorProfile {
+    name: string;
+    provider: string;
+    model: string;
+    style: AgentStyle;
+    voiceId: string;
 }
 
 const MASTER_LOG_INTERACTION_DEFAULTS: SquadInteractionConfig = {
@@ -34,14 +42,24 @@ const LIVE_CAMPAIGN_INTERACTION_DEFAULTS: SquadInteractionConfig = {
 };
 
 export const DEFAULT_SQUAD_INTERACTION = MASTER_LOG_INTERACTION_DEFAULTS;
+export const DEFAULT_SQUAD_ORCHESTRATOR_PROFILE: SquadOrchestratorProfile = {
+    name: "OR",
+    provider: "groq",
+    model: "llama-3.3-70b-versatile",
+    style: "assistant",
+    voiceId: "en-US-ChristopherNeural",
+};
 
 export interface SquadConfig {
     id?: string;
     name: string;
-    mission: string;
-    directorId: string;
+    goal?: string;
+    context?: string;
+    // Legacy alias retained for backward compatibility with existing local storage.
+    mission?: string;
     members: string[];
     maxIterations?: number;
+    orchestrator?: Partial<SquadOrchestratorProfile>;
     interaction?: Partial<SquadInteractionConfig>;
 }
 
@@ -72,8 +90,8 @@ export interface DirectorDecision {
 
 export interface SquadRuntime {
     config: SquadConfig;
-    director: AgentConfig;
     workers: AgentConfig[];
+    orchestrator: SquadOrchestratorProfile;
 }
 
 function normalizeMode(input: unknown): SquadInteractionMode | null {
@@ -90,9 +108,41 @@ function normalizeBoolean(input: unknown, fallback: boolean): boolean {
     return typeof input === "boolean" ? input : fallback;
 }
 
+function sanitizeText(input: unknown): string {
+    return typeof input === "string" ? input.trim() : "";
+}
+
+function normalizeStyle(input: unknown): AgentStyle | null {
+    if (input === "assistant" || input === "character" || input === "expert" || input === "custom") {
+        return input;
+    }
+    return null;
+}
+
 function sanitizeMembers(input: unknown): string[] {
     if (!Array.isArray(input)) return [];
-    return input.filter((member): member is string => typeof member === "string" && member.trim().length > 0);
+    const seen = new Set<string>();
+    const output: string[] = [];
+
+    for (const entry of input) {
+        if (typeof entry !== "string") continue;
+        const value = entry.trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        output.push(value);
+    }
+
+    return output;
+}
+
+export function getSquadGoal(config?: SquadConfig | null): string {
+    const directGoal = sanitizeText(config?.goal);
+    if (directGoal) return directGoal;
+    return sanitizeText(config?.mission);
+}
+
+export function getSquadContext(config?: SquadConfig | null): string {
+    return sanitizeText(config?.context);
 }
 
 export function getSquadInteractionConfig(config?: SquadConfig | null): SquadInteractionConfig {
@@ -114,14 +164,33 @@ export function getSquadInteractionConfig(config?: SquadConfig | null): SquadInt
 }
 
 export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
+    const legacyDirectorId = sanitizeText((config as { directorId?: unknown }).directorId);
+    const normalizedMembers = sanitizeMembers(config.members);
+    const effectiveMembers = normalizedMembers.length > 0
+        ? normalizedMembers
+        : (legacyDirectorId ? [legacyDirectorId] : []);
+
+    const goal = getSquadGoal(config);
+    const context = getSquadContext(config);
     const safeMaxIterations = typeof config.maxIterations === "number" && Number.isFinite(config.maxIterations)
         ? Math.max(1, Math.floor(config.maxIterations))
         : undefined;
+    const orchestrator = config.orchestrator ?? {};
 
     return {
         ...config,
-        members: sanitizeMembers(config.members),
+        goal,
+        mission: goal,
+        context,
+        members: effectiveMembers,
         maxIterations: safeMaxIterations,
+        orchestrator: {
+            name: sanitizeText(orchestrator.name) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.name,
+            provider: sanitizeText(orchestrator.provider) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider,
+            model: sanitizeText(orchestrator.model) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.model,
+            style: normalizeStyle(orchestrator.style) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.style,
+            voiceId: sanitizeText(orchestrator.voiceId) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.voiceId,
+        },
         interaction: getSquadInteractionConfig(config),
     };
 }
