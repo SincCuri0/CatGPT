@@ -1,0 +1,209 @@
+{
+  "updatedAt": 1770946281908,
+  "voices": [
+    {
+      "id": "CwhRBWXzGAHq8TQ4Fs17",
+      "label": "Roger - Laid-Back, Casual, Resonant",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "EXAVITQu4vr4xnSDxMaL",
+      "label": "Sarah - Mature, Reassuring, Confident",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "FGY2WhTYpPnrIDTdsKH5",
+      "label": "Laura - Enthusiast, Quirky Attitude",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "IKne3meq5aSn9XLyUdCD",
+      "label": "Charlie - Deep, Confident, Energetic",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "JBFqnCBsd6RMkjVDRZzb",
+      "label": "George - Warm, Captivating Storyteller",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "N2lVS1w4EtoT3dr4eOWO",
+      "label": "Callum - Husky Trickster",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "SAz9YHcvj6GT2YYXdXww",
+      "label": "River - Relaxed, Neutral, Informative",
+      "gender": "neutral",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "SOYHLrjzK2X1ezoPC6cr",
+      "label": "Harry - Fierce Warrior",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "TX3LPaxmHKxFdv7VOQHJ",
+      "label": "Liam - Energetic, Social Media Creator",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "Xb7hH8MSUJpSbSDYk0k2",
+      "label": "Alice - Clear, Engaging Educator",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "XrExE9yKIg1WjnnlVkGX",
+      "label": "Matilda - Knowledgable, Professional",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "bIHbv24MWmeRgasZH58o",
+      "label": "Will - Relaxed Optimist",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "cgSgspJ2msm6clMCkdW9",
+      "label": "Jessica - Playful, Bright, Warm",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "cjVigY5qzO86Huf0OWal",
+      "label": "Eric - Smooth, Trustworthy",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "hpp4J3VqNfWAUOO0d1Us",
+      "label": "Bella - Professional, Bright, Warm",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "iP95p4xoKVk53GoZ742B",
+      "label": "Chris - Charming, Down-to-Earth",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "nPczCjzI2devNBz1zQrb",
+      "label": "Brian - Deep, Resonant and Comforting",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "onwK4e9ZLuTAKqWW03F9",
+      "label": "Daniel - Steady Broadcaster",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "pFZP5JQG7iQjIQuC4Bku",
+      "label": "Lily - Velvety Actress",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "pNInz6obpgDQGcFmaJgB",
+      "label": "Adam - Dominant, Firm",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "pqHfZKP75CvOlQylNhV4",
+      "label": "Bill - Wise, Mature, Balanced",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "7898AMdRTtesf0Y9zS54",
+      "label": "Lightsey Vox",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "BIvP0GN1cAtSRTxNHnWS",
+      "label": "Ellen - Serious, Direct and Confident",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "I4Wn5v2YSJOuU9kGA3Tv",
+      "label": "Brian",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "L1aJrPa7pLJEyYlh3Ilq",
+      "label": "Oliver Haddington",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "NFG5qt843uXKj4pFvR7C",
+      "label": "Adam Stone - late night radio",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "OaaUcuML3efkUBS9bNn2",
+      "label": "SinCuri0 Prof",
+      "gender": "neutral",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "Qm2nC5PveiRLDjTZJKxD",
+      "label": "SinCuri0",
+      "gender": "neutral",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "RILOU7YmBhvwJGDGjNmP",
+      "label": "Jane - Professional Audiobook Reader",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "XfNU2rGpBa01ckF309OY",
+      "label": "Nichalia Schwartz",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "ZqvIIuD5aI9JFejebHiH",
+      "label": "Mira - Meditation, Calming Down, Relaxing",
+      "gender": "female",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "fATgBRI8wg5KkDFg8vBd",
+      "label": "James - British Professional Smooth",
+      "gender": "male",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "g2OD2prLU0C1rPbCOFVL",
+      "label": "Insinq",
+      "gender": "neutral",
+      "provider": "elevenlabs"
+    },
+    {
+      "id": "kJKMPwrIKzwVkMKOfRtr",
+      "label": "Ken Franson - Professional Narration",
+      "gender": "male",
+      "provider": "elevenlabs"
+    }
+  ]
+}

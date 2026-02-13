@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSettings } from "@/hooks/useSettings";
 import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
-import { SquadConfig, SquadRunStep, getSquadInteractionConfig, normalizeSquadConfig } from "@/lib/core/Squad";
+import { SquadConfig, SquadRunStep, getSquadGoal, getSquadInteractionConfig, normalizeSquadConfig } from "@/lib/core/Squad";
 import { Message } from "@/lib/core/types";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AgentEditor } from "@/components/agent/AgentEditor";
@@ -124,6 +124,28 @@ const normalizeTraceStatus = (status: unknown): SquadTraceTurn["status"] => {
     return value;
   }
   return "completed";
+};
+
+const getSquadWorkerAgents = (squad: SquadConfig, allAgents: AgentConfig[]): AgentConfig[] => (
+  allAgents.filter((agent) => {
+    const id = agent.id || "";
+    return squad.members.includes(id);
+  })
+);
+
+const buildSquadOrchestratorAgent = (squad: SquadConfig): AgentConfig => {
+  const goal = getSquadGoal(squad);
+  return {
+    id: `${squad.id || squad.name}-orchestrator`,
+    name: squad.orchestrator?.name || "OR",
+    role: "Squad Orchestrator",
+    systemPrompt: goal || "Coordinate worker agents to complete tasks.",
+    style: squad.orchestrator?.style || "assistant",
+    voiceId: squad.orchestrator?.voiceId || DEFAULT_VOICE_ID,
+    provider: squad.orchestrator?.provider || DEFAULT_PROVIDER_ID,
+    model: squad.orchestrator?.model || DEFAULT_MODEL_ID,
+    tools: [],
+  };
 };
 
 export default function CEODashboard() {
@@ -411,14 +433,14 @@ export default function CEODashboard() {
     targetSquad?: SquadConfig,
   ): Promise<{ role: "assistant" | "system"; content: string }> => {
     if (command.name === "/create_cats") {
-      const squadDirector = targetSquad
-        ? agents.find((agent) => agent.id === targetSquad.directorId)
+      const squadAnchor = targetSquad
+        ? getSquadWorkerAgents(targetSquad, agents)[0]
         : undefined;
 
       return executeCreateCatsCommand(
         command.args,
-        targetAgent?.provider || squadDirector?.provider,
-        targetAgent?.model || squadDirector?.model,
+        targetAgent?.provider || targetSquad?.orchestrator?.provider || squadAnchor?.provider,
+        targetAgent?.model || targetSquad?.orchestrator?.model || squadAnchor?.model,
       );
     }
 
@@ -590,12 +612,9 @@ export default function CEODashboard() {
       return [];
     }
 
-    const participants = agents.filter((agent) => {
-      const id = agent.id || "";
-      return id === squad.directorId || squad.members.includes(id);
-    });
+    const participants = getSquadWorkerAgents(squad, agents);
     const byId = new Map(participants.map((agent) => [agent.id || "", agent]));
-    const director = byId.get(squad.directorId);
+    const orchestratorSpeaker = buildSquadOrchestratorAgent(squad);
     const output: Message[] = [];
 
     for (const step of stepList) {
@@ -608,8 +627,8 @@ export default function CEODashboard() {
           output.push(
             createAgentAssistantMessage(
               `${summary}${assignment}`,
-              director,
-              "Director",
+              orchestratorSpeaker,
+              orchestratorSpeaker.name || "OR",
               interactionConfig,
             ),
           );
@@ -746,7 +765,7 @@ export default function CEODashboard() {
           createAgentAssistantMessage(responseText, targetAgent, targetAgent?.name || "Assistant"),
         );
       } else if (targetSquad) {
-        const director = agents.find((agent) => agent.id === targetSquad.directorId);
+        const orchestratorSpeaker = buildSquadOrchestratorAgent(targetSquad);
         const lastVisibleMessage = finalAssistantMessages[finalAssistantMessages.length - 1];
         const shouldAppendFinal = responseText.trim().length > 0
           && (!lastVisibleMessage || lastVisibleMessage.content.trim() !== responseText.trim());
@@ -755,8 +774,8 @@ export default function CEODashboard() {
           finalAssistantMessages.push(
             createAgentAssistantMessage(
               responseText || "The squad completed this turn.",
-              director,
-              director?.name || targetSquad.name,
+              orchestratorSpeaker,
+              orchestratorSpeaker.name || targetSquad.name,
               interactionConfig,
             ),
           );
@@ -843,24 +862,17 @@ export default function CEODashboard() {
   const selectedSquadRaw = selectedSquadId ? squads.find((s) => s.id === selectedSquadId) : undefined;
   const selectedSquad = selectedSquadRaw ? normalizeSquadConfig(selectedSquadRaw) : undefined;
   const selectedSquadInteraction = selectedSquad ? getSquadInteractionConfig(selectedSquad) : undefined;
-  const squadDirector = selectedSquad ? agents.find((a) => a.id === selectedSquad.directorId) : undefined;
   const squadParticipants = selectedSquad
-    ? agents.filter((agent) => {
-      const id = agent.id || "";
-      return id === selectedSquad.directorId || selectedSquad.members.includes(id);
-    })
+    ? getSquadWorkerAgents(selectedSquad, agents)
     : [];
-  const selectedSquadChatAgent: AgentConfig | null = selectedSquad ? {
-    id: selectedSquad.id,
-    name: selectedSquad.name,
-    role: "Squad Orchestrator",
-    systemPrompt: selectedSquad.mission || "Coordinate worker agents to complete tasks.",
-    style: squadDirector?.style || "assistant",
-    voiceId: squadDirector?.voiceId || "en-US-ChristopherNeural",
-    provider: squadDirector?.provider || "groq",
-    model: squadDirector?.model || "llama-3.3-70b-versatile",
-    tools: [],
-  } : null;
+  const selectedSquadChatAgent: AgentConfig | null = selectedSquad
+    ? {
+      ...buildSquadOrchestratorAgent(selectedSquad),
+      id: selectedSquad.id,
+      name: selectedSquad.name,
+      systemPrompt: getSquadGoal(selectedSquad) || "Coordinate worker agents to complete tasks.",
+    }
+    : null;
   const selectedAgent = selectedAgentId ? agents.find((a) => a.id === selectedAgentId) : undefined;
   const activeChatAgent = selectedAgent || selectedSquadChatAgent;
   const shouldShowMasterLog = Boolean(selectedSquad && selectedSquadInteraction?.showMasterLog);
@@ -998,8 +1010,8 @@ export default function CEODashboard() {
                           if (confirmed) {
                             saveAgents(agents.filter(a => a.id !== agent.id));
                             const updatedSquads = squads
-                              .filter((s) => s.directorId !== agent.id)
-                              .map((s) => ({ ...s, members: s.members.filter((id) => id !== agent.id) }));
+                              .map((s) => ({ ...s, members: s.members.filter((id) => id !== agent.id) }))
+                              .filter((s) => s.members.length > 0);
                             saveSquads(updatedSquads);
                             if (selectedSquadId && !updatedSquads.some((s) => s.id === selectedSquadId)) {
                               setSelectedSquadId(null);
@@ -1046,7 +1058,6 @@ export default function CEODashboard() {
           <div className="space-y-1 pr-1 flex-shrink-0 max-h-[24%] overflow-y-auto custom-scrollbar">
             {squads.map((squad) => {
               const isSelected = selectedSquadId === squad.id;
-              const director = agents.find((a) => a.id === squad.directorId);
               const memberCount = squad.members.length;
 
               return (
@@ -1064,7 +1075,7 @@ export default function CEODashboard() {
                     <div className="flex-1 min-w-0 text-left">
                       <div className="text-[13px] font-medium leading-tight truncate">{squad.name}</div>
                       <div className="text-[11px] text-[#8e8ea0] truncate">
-                        {memberCount} members • Director: {director?.name || "Unknown"}
+                        {memberCount} worker{memberCount === 1 ? "" : "s"}
                       </div>
                     </div>
 
@@ -1355,7 +1366,7 @@ export default function CEODashboard() {
                   <div className="px-4 py-3 border-b border-white/10 bg-[#1f1f1f]">
                     <div className="text-sm font-semibold text-white">Master Log</div>
                     <div className="text-[11px] text-[#8e8ea0]">
-                      Director decisions and worker collaboration trace
+                      Orchestrator decisions and worker collaboration trace
                     </div>
                   </div>
 
@@ -1388,7 +1399,7 @@ export default function CEODashboard() {
                             <div key={`${turn.id}-${step.iteration}`} className="border border-white/10 rounded-md p-2 bg-[#171717]">
                               <div className="text-[11px] text-[#8e8ea0] mb-1">Iteration {step.iteration}</div>
                               <div className="text-xs text-[#ececec]">
-                                <span className="text-[#8e8ea0]">Director:</span> {step.directorDecision.summary}
+                                <span className="text-[#8e8ea0]">Orchestrator:</span> {step.directorDecision.summary}
                               </div>
                               <div className="text-[11px] text-[#b4b4b4] mt-1">
                                 Status: {step.directorDecision.status}
