@@ -48,9 +48,10 @@ export function useTTS() {
         setIsLoading(true);
 
         try {
+            const apiKeys = localStorage.getItem("cat_gpt_api_keys") || "{}";
             const response = await fetch("/api/tts", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "x-api-keys": apiKeys },
                 body: JSON.stringify({
                     text: truncated,
                     voice: voiceOverride || settings.ttsVoice,
