@@ -58,7 +58,7 @@ export async function setEnvVariable(key: string, value: string): Promise<void> 
 }
 
 export async function getAllApiKeys(): Promise<Record<string, boolean>> {
-    const keys = ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"];
+    const keys = ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "ELEVENLABS_API_KEY"];
     const result: Record<string, boolean> = {};
 
     for (const key of keys) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield } from "lucide-react";
 import { GROQ_TTS_VOICES, EDGE_TTS_VOICES, BROWSER_TTS_VOICES, loadAudioSettings, saveAudioSettings, TTSProvider } from "@/lib/audio/types";
 import { PROVIDERS } from "@/lib/llm/constants";
@@ -20,21 +20,25 @@ const AGENT_STYLES: { value: AgentStyle; label: string; desc: string; icon: Reac
     { value: "custom", label: "Custom", desc: "Fully freeform", icon: <Sparkles size={14} /> },
 ];
 
-// Pick voice list based on the provided TTS provider
-function getVoiceOptions(provider: string) {
+type VoiceOption = { id: string; label: string; desc: string };
+
+function getVoiceOptions(provider: string, elevenLabsVoices: VoiceOption[]): VoiceOption[] {
     if (provider === "browser") {
         return BROWSER_TTS_VOICES.map((v) => ({ id: v.id, label: v.label, desc: `${v.gender} (Browser)` }));
     }
     if (provider === "edge") {
         return EDGE_TTS_VOICES.map((v) => ({ id: v.id, label: v.label, desc: `${v.gender} (Cloud)` }));
     }
-    // Default: Groq Orpheus
+    if (provider === "elevenlabs") {
+        return elevenLabsVoices;
+    }
     return GROQ_TTS_VOICES.map((v) => ({ id: v.id, label: v.label, desc: `${v.gender} (Groq)` }));
 }
 
 const TTS_PROVIDERS = [
     { id: "groq", label: "Groq Orpheus", desc: "High quality, needs API key" },
     { id: "edge", label: "Edge (Cloud)", desc: "Natural voices, free" },
+    { id: "elevenlabs", label: "ElevenLabs", desc: "Premium cloned voices" },
     { id: "browser", label: "Browser Native", desc: "Simple, local fallback" },
 ] as const;
 
@@ -62,18 +66,50 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
     );
 
     const [activeSection, setActiveSection] = useState<"identity" | "prompt" | "model" | "tools">("identity");
+    const [modelSubTab, setModelSubTab] = useState<"llm" | "voice">("llm");
     const [ttsProvider, setTtsProvider] = useState<TTSProvider>(() => loadAudioSettings().ttsProvider || "groq");
     const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
     const [generatePromptError, setGeneratePromptError] = useState<string | null>(null);
+    const [elevenLabsVoices, setElevenLabsVoices] = useState<VoiceOption[]>([]);
+
+    useEffect(() => {
+        try {
+            const cached = localStorage.getItem("cat_gpt_elevenlabs_voices");
+            if (cached) {
+                const parsed = JSON.parse(cached) as VoiceOption[];
+                if (Array.isArray(parsed)) setElevenLabsVoices(parsed);
+            }
+        } catch {
+            // ignore cache parse errors
+        }
+
+        fetch("/api/elevenlabs/voices")
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Voice fetch failed"))))
+            .then((data) => {
+                if (Array.isArray(data.voices)) {
+                    const mapped = data.voices.map((voice: { id: string; label: string; gender?: string }) => ({
+                        id: voice.id,
+                        label: voice.label,
+                        desc: `${voice.gender || "neutral"} (ElevenLabs)`,
+                    }));
+                    setElevenLabsVoices(mapped);
+                    localStorage.setItem("cat_gpt_elevenlabs_voices", JSON.stringify(mapped));
+                }
+            })
+            .catch(() => undefined);
+    }, []);
+
+    const voiceOptions = useMemo(() => getVoiceOptions(ttsProvider, elevenLabsVoices), [ttsProvider, elevenLabsVoices]);
 
     const handleProviderChange = (provider: TTSProvider) => {
+
         setTtsProvider(provider);
         // Auto-select first voice for the new provider
-        const voices = getVoiceOptions(provider);
-        setFormData((prev) => ({ ...prev, voiceId: voices[0]?.id || "troy" }));
+        const voices = getVoiceOptions(provider, elevenLabsVoices);
+        setFormData((prev) => ({ ...prev, voiceId: voices[0]?.id || prev.voiceId || "troy" }));
         // Persist to audio settings
         const settings = loadAudioSettings();
-        saveAudioSettings({ ...settings, ttsProvider: provider, ttsVoice: voices[0]?.id || "troy" });
+        saveAudioSettings({ ...settings, ttsProvider: provider, ttsVoice: voices[0]?.id || settings.ttsVoice || "troy" });
     };
 
     const toggleTool = (id: string) => {
@@ -287,138 +323,146 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
 
                 {/* ===== MODEL & VOICE SECTION ===== */}
                 {activeSection === "model" && (
-                    <>
-                        {/* Provider Selection */}
-                        <div className="space-y-2 mb-4">
-                            <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                <Cpu size={12} />
-                                AI Provider
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                                {PROVIDERS.map((p) => {
-                                    const isSelected = (formData.provider || "groq") === p.id;
-                                    return (
-                                        <button
-                                            key={p.id}
-                                            onClick={() => {
-                                                setFormData({
-                                                    ...formData,
-                                                    provider: p.id,
-                                                    model: p.defaultModel
-                                                });
-                                            }}
-                                            className={`px-3 py-2 rounded-lg border text-left transition-all ${isSelected
-                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
-                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
-                                                }`}
-                                        >
-                                            <div className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
-                                                {p.name}
-                                            </div>
-                                            <div className="text-[10px] text-[#8e8ea0]">{p.description}</div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                    <div className="space-y-4">
+                        <div className="inline-flex p-1 rounded-lg border border-[#424242] bg-[#252525]">
+                            <button
+                                type="button"
+                                onClick={() => setModelSubTab("llm")}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${modelSubTab === "llm"
+                                    ? "bg-[#10a37f]/20 text-white border border-[#10a37f]/40"
+                                    : "text-[#9ca3af] hover:text-white"
+                                    }`}
+                            >
+                                AI Model
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setModelSubTab("voice")}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${modelSubTab === "voice"
+                                    ? "bg-[#10a37f]/20 text-white border border-[#10a37f]/40"
+                                    : "text-[#9ca3af] hover:text-white"
+                                    }`}
+                            >
+                                Voice
+                            </button>
                         </div>
 
-                        {/* Model Selection */}
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                <Cpu size={12} />
-                                AI Model ({currentProvider.name})
-                            </label>
-                            <div className="grid grid-cols-1 gap-2">
-                                {availableModels.map((model) => {
-                                    const isSelected = (formData.model || currentProvider.defaultModel) === model.id;
-                                    return (
-                                        <button
-                                            key={model.id}
-                                            onClick={() => setFormData({ ...formData, model: model.id })}
-                                            className={`px-4 py-3 rounded-lg border flex items-center justify-between transition-all ${isSelected
-                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
-                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
-                                                }`}
-                                        >
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-3 h-3 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-[#10a37f]" : "border-[#676767]"
-                                                    }`}>
-                                                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-[#10a37f]" />}
-                                                </div>
-                                                <span className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
-                                                    {model.label}
-                                                </span>
-                                            </div>
-                                            <span className="text-[11px] text-[#8e8ea0]">{model.description}</span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Voice Selection */}
-                        <div className="space-y-4 mt-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                    <Volume2 size={12} />
-                                    TTS Provider
-                                </label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {TTS_PROVIDERS.map((p) => {
-                                        const isSelected = ttsProvider === p.id;
-                                        return (
-                                            <button
-                                                key={p.id}
-                                                onClick={() => handleProviderChange(p.id)}
-                                                className={`px-3 py-2 rounded-lg border text-left transition-all ${isSelected
-                                                    ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
-                                                    : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
-                                                    }`}
-                                            >
-                                                <div className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
-                                                    {p.label}
-                                                </div>
-                                                <div className="text-[10px] text-[#8e8ea0]">{p.desc}</div>
-                                            </button>
-                                        );
-                                    })}
+                        {modelSubTab === "llm" ? (
+                            <>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                        <Cpu size={12} />
+                                        AI Provider
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {PROVIDERS.map((p) => {
+                                            const isSelected = (formData.provider || "groq") === p.id;
+                                            return (
+                                                <button
+                                                    key={p.id}
+                                                    onClick={() => {
+                                                        setFormData({
+                                                            ...formData,
+                                                            provider: p.id,
+                                                            model: p.defaultModel,
+                                                        });
+                                                    }}
+                                                    className={`px-2.5 py-2 rounded-lg border text-left transition-all ${isSelected
+                                                        ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                        : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                        }`}
+                                                >
+                                                    <div className={`text-xs font-semibold ${isSelected ? "text-white" : "text-[#ececec]"}`}>{p.name}</div>
+                                                    <div className="text-[10px] text-[#8e8ea0] truncate">{p.description}</div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="space-y-2">
-                                <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                    <Volume2 size={12} />
-                                    TTS Voice
-                                </label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {getVoiceOptions(ttsProvider).map((voice) => {
-                                        const isSelected = (formData.voiceId || "troy") === voice.id;
-                                        return (
-                                            <button
-                                                key={voice.id}
-                                                onClick={() => setFormData({ ...formData, voiceId: voice.id })}
-                                                className={`px-3 py-2.5 rounded-lg border flex items-center gap-3 transition-all ${isSelected
-                                                    ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
-                                                    : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
-                                                    }`}
-                                            >
-                                                <div className={`w-3 h-3 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-[#10a37f]" : "border-[#676767]"
-                                                    }`}>
-                                                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-[#10a37f]" />}
-                                                </div>
-                                                <div className="flex flex-col text-left">
-                                                    <span className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
-                                                        {voice.label}
+                                <div className="space-y-2">
+                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                        <Cpu size={12} />
+                                        AI Model ({currentProvider.name})
+                                    </label>
+                                    <div className="grid grid-cols-1 gap-1.5 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
+                                        {availableModels.map((model) => {
+                                            const isSelected = (formData.model || currentProvider.defaultModel) === model.id;
+                                            return (
+                                                <button
+                                                    key={model.id}
+                                                    onClick={() => setFormData({ ...formData, model: model.id })}
+                                                    className={`px-3 py-2.5 rounded-lg border flex items-center justify-between gap-3 transition-all ${isSelected
+                                                        ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                        : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                        }`}
+                                                >
+                                                    <span className={`text-xs font-medium truncate ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                        {model.label}
                                                     </span>
-                                                    <span className="text-[10px] text-[#8e8ea0]">{voice.desc}</span>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
+                                                    <span className="text-[10px] text-[#8e8ea0] hidden sm:inline">{model.description}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    </>
+                            </>
+                        ) : (
+                            <>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                        <Volume2 size={12} />
+                                        TTS Provider
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {TTS_PROVIDERS.map((p) => {
+                                            const isSelected = ttsProvider === p.id;
+                                            return (
+                                                <button
+                                                    key={p.id}
+                                                    onClick={() => handleProviderChange(p.id)}
+                                                    className={`px-2.5 py-2 rounded-lg border text-left transition-all ${isSelected
+                                                        ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                        : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                        }`}
+                                                >
+                                                    <div className={`text-xs font-semibold ${isSelected ? "text-white" : "text-[#ececec]"}`}>{p.label}</div>
+                                                    <div className="text-[10px] text-[#8e8ea0] truncate">{p.desc}</div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                        <Volume2 size={12} />
+                                        TTS Voice
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
+                                        {voiceOptions.map((voice) => {
+                                            const isSelected = (formData.voiceId || "troy") === voice.id;
+                                            return (
+                                                <button
+                                                    key={voice.id}
+                                                    onClick={() => setFormData({ ...formData, voiceId: voice.id })}
+                                                    className={`px-3 py-2 rounded-lg border text-left transition-all ${isSelected
+                                                        ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                        : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                        }`}
+                                                >
+                                                    <div className={`text-xs font-semibold truncate ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                        {voice.label}
+                                                    </div>
+                                                    <div className="text-[10px] text-[#8e8ea0] truncate">{voice.desc}</div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
                 )}
 
                 {/* ===== CAPABILITIES SECTION ===== */}
