@@ -8,7 +8,7 @@ export const WebSearchTool: Tool = {
     id: "web_search",
     name: "search_internet",
     description: "Search the internet for information.",
-    parameters: {
+    inputSchema: {
         type: "object",
         properties: {
             query: {
@@ -18,13 +18,17 @@ export const WebSearchTool: Tool = {
         },
         required: ["query"]
     },
-    execute: async (args: { query: string }) => {
+    execute: async (args: unknown) => {
+        const query = typeof (args as { query?: unknown })?.query === "string"
+            ? (args as { query: string }).query
+            : "";
+
         // Placeholder implementation
         // Ideally, check for an API key in environment or settings
-        console.warn("Web Search Tool called with:", args.query);
-        return `[Mock Search Result] Found several articles about "${args.query}". 
-    1. Wikipedia: ${args.query} is a fascinating topic...
-    2. News: Recent developments in ${args.query}...
+        console.warn("Web Search Tool called with:", query);
+        return `[Mock Search Result] Found several articles about "${query}". 
+    1. Wikipedia: ${query} is a fascinating topic...
+    2. News: Recent developments in ${query}...
     (Note: Real web search requires an API key configuration, e.g., Tavily)`;
     }
 };

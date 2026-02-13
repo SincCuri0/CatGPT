@@ -3,8 +3,15 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 interface SettingsContextType {
+    // Legacy support
     apiKey: string | null;
     setApiKey: (key: string) => void;
+
+    // New multi-provider support
+    apiKeys: Record<string, string>;
+    setProviderKey: (providerId: string, key: string) => void;
+    serverConfiguredKeys: Record<string, boolean>;
+
     safeMode: boolean;
     setSafeMode: (mode: boolean) => void;
     themeMetadata: ThemeMetadata;
@@ -19,32 +26,45 @@ interface ThemeMetadata {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-    const [apiKey, setApiKeyState] = useState<string | null>(null);
+    // apiKeys: contains local keys (users enter these)
+    const [apiKeys, setApiKeysState] = useState<Record<string, string>>({});
+    // serverConfiguredKeys: which keys are set on server (.env)
+    const [serverConfiguredKeys, setServerConfiguredKeys] = useState<Record<string, boolean>>({});
+
     const [safeMode, setSafeModeState] = useState<boolean>(true);
     const [themeMetadata, setThemeMetadataState] = useState<ThemeMetadata>({ id: 'modern', name: 'Sleek Synergy' });
 
     useEffect(() => {
-        // Load from localStorage on mount
-        const storedKey = localStorage.getItem("groq_api_key");
-        if (storedKey) setApiKeyState(storedKey);
+        // 1. Load local keys from localStorage
+        const storedKeysStr = localStorage.getItem("cat_gpt_api_keys");
+        let localKeys: Record<string, string> = {};
+        if (storedKeysStr) {
+            try {
+                localKeys = JSON.parse(storedKeysStr);
+            } catch { /* ignore */ }
+        }
 
-        // Sync with Server .env
+        // Backward compat: check old key
+        const oldGroqKey = localStorage.getItem("groq_api_key");
+        if (oldGroqKey && !localKeys.groq) {
+            localKeys.groq = oldGroqKey;
+        }
+
+        setApiKeysState(localKeys);
+
+        // 2. Fetch server config status
         fetch('/api/settings')
             .then(res => res.json())
             .then(data => {
-                if (data.apiKey) {
-                    if (!storedKey || storedKey !== data.apiKey) {
-                        setApiKeyState(data.apiKey);
-                        localStorage.setItem("groq_api_key", data.apiKey);
-                    }
+                if (data.keysConfigured) {
+                    setServerConfiguredKeys(data.keysConfigured);
                 }
+                // Optional: Sync legacy logic if needed, but 'keysConfigured' is enough for UI
             })
             .catch(e => console.error("Settings sync failed", e));
 
         const storedSafeMode = localStorage.getItem("safe_mode");
         if (storedSafeMode) setSafeModeState(storedSafeMode === "true");
-
-        // Default safe mode to true if not set
         if (storedSafeMode === null) setSafeModeState(true);
 
         const storedTheme = localStorage.getItem("theme_metadata");
@@ -57,23 +77,33 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
-    const setApiKey = async (key: string) => {
-        setApiKeyState(key);
-        if (key) {
-            localStorage.setItem("groq_api_key", key);
-            try {
-                await fetch('/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiKey: key })
-                });
-            } catch (e) {
-                console.error("Failed to persist API Key", e);
-            }
-        } else {
-            localStorage.removeItem("groq_api_key");
+    const setProviderKey = async (providerId: string, key: string) => {
+        const newKeys = { ...apiKeys, [providerId]: key };
+        if (!key) delete newKeys[providerId]; // Remove if empty
+
+        setApiKeysState(newKeys);
+        localStorage.setItem("cat_gpt_api_keys", JSON.stringify(newKeys));
+
+        // Sync legacy key if Groq
+        if (providerId === "groq") {
+            if (key) localStorage.setItem("groq_api_key", key);
+            else localStorage.removeItem("groq_api_key");
+        }
+
+        // Persist to server (optional, for dev mode)
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apiKeys: { [providerId]: key } })
+            });
+        } catch (e) {
+            console.error("Failed to persist API Key to server", e);
         }
     };
+
+    // Legacy setter
+    const setApiKey = (key: string) => setProviderKey("groq", key);
 
     const setSafeMode = (mode: boolean) => {
         setSafeModeState(mode);
@@ -86,7 +116,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
 
     return (
-        <SettingsContext.Provider value={{ apiKey, setApiKey, safeMode, setSafeMode, themeMetadata, setThemeMetadata }}>
+        <SettingsContext.Provider value={{
+            apiKey: apiKeys.groq || null,
+            setApiKey,
+            apiKeys,
+            setProviderKey,
+            serverConfiguredKeys,
+            safeMode,
+            setSafeMode,
+            themeMetadata,
+            setThemeMetadata
+        }}>
             {children}
         </SettingsContext.Provider>
     );

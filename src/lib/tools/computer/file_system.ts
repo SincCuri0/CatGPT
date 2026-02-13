@@ -8,11 +8,20 @@ import * as path from "path";
 
 const WORKSPACE_DIR = process.cwd(); // Root of the project or specific workspace
 
+function asStringField(args: unknown, field: string): string {
+    const value = (args as Record<string, unknown> | null)?.[field];
+    return typeof value === "string" ? value : "";
+}
+
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export const FileSystemReadTool: Tool = {
     id: "fs_read",
     name: "read_file",
     description: "Read the contents of a file from the local file system.",
-    parameters: {
+    inputSchema: {
         type: "object",
         properties: {
             path: {
@@ -22,13 +31,14 @@ export const FileSystemReadTool: Tool = {
         },
         required: ["path"]
     },
-    execute: async (args: { path: string }) => {
+    execute: async (args: unknown) => {
         try {
-            const filePath = path.resolve(WORKSPACE_DIR, args.path);
+            const targetPath = asStringField(args, "path");
+            const filePath = path.resolve(WORKSPACE_DIR, targetPath);
             const data = await fs.readFile(filePath, "utf-8");
             return data;
-        } catch (error: any) {
-            return `Error reading file: ${error.message}`;
+        } catch (error: unknown) {
+            return `Error reading file: ${getErrorMessage(error)}`;
         }
     }
 };
@@ -37,7 +47,7 @@ export const FileSystemWriteTool: Tool = {
     id: "fs_write",
     name: "write_file",
     description: "Write content to a file. Creates the file if it doesn't exist.",
-    parameters: {
+    inputSchema: {
         type: "object",
         properties: {
             path: {
@@ -51,14 +61,16 @@ export const FileSystemWriteTool: Tool = {
         },
         required: ["path", "content"]
     },
-    execute: async (args: { path: string; content: string }) => {
+    execute: async (args: unknown) => {
         try {
-            const filePath = path.resolve(WORKSPACE_DIR, args.path);
+            const targetPath = asStringField(args, "path");
+            const content = asStringField(args, "content");
+            const filePath = path.resolve(WORKSPACE_DIR, targetPath);
             await fs.mkdir(path.dirname(filePath), { recursive: true });
-            await fs.writeFile(filePath, args.content, "utf-8");
-            return `Successfully wrote to ${args.path}`;
-        } catch (error: any) {
-            return `Error writing file: ${error.message}`;
+            await fs.writeFile(filePath, content, "utf-8");
+            return `Successfully wrote to ${targetPath}`;
+        } catch (error: unknown) {
+            return `Error writing file: ${getErrorMessage(error)}`;
         }
     }
 };
@@ -67,7 +79,7 @@ export const FileSystemListTool: Tool = {
     id: "fs_list",
     name: "list_directory",
     description: "List files and directories in a given path.",
-    parameters: {
+    inputSchema: {
         type: "object",
         properties: {
             path: {
@@ -77,13 +89,14 @@ export const FileSystemListTool: Tool = {
         },
         required: ["path"]
     },
-    execute: async (args: { path: string }) => {
+    execute: async (args: unknown) => {
         try {
-            const dirPath = path.resolve(WORKSPACE_DIR, args.path);
+            const targetPath = asStringField(args, "path");
+            const dirPath = path.resolve(WORKSPACE_DIR, targetPath);
             const items = await fs.readdir(dirPath, { withFileTypes: true });
             return items.map(item => `${item.isDirectory() ? '[DIR]' : '[FILE]'} ${item.name}`).join("\n");
-        } catch (error: any) {
-            return `Error listing directory: ${error.message}`;
+        } catch (error: unknown) {
+            return `Error listing directory: ${getErrorMessage(error)}`;
         }
     }
 }

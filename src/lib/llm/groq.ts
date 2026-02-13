@@ -1,5 +1,5 @@
 import Groq from "groq-sdk";
-import { LLMClient, LLMMessage, LLMResponse } from "./types";
+import { LLMChatOptions, LLMClient, LLMMessage, LLMResponse } from "./types";
 
 export class GroqClient implements LLMClient {
     private client: Groq;
@@ -11,7 +11,7 @@ export class GroqClient implements LLMClient {
         this.model = model;
     }
 
-    async chat(messages: LLMMessage[], options?: { temperature?: number; max_tokens?: number }): Promise<LLMResponse> {
+    async chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse> {
         try {
             const completion = await this.client.chat.completions.create({
                 messages,

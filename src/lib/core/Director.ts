@@ -1,7 +1,11 @@
 import { Agent, AgentConfig } from "./Agent";
-import { Message } from "./types";
-import { createLLMClient } from "../llm/groq";
-import { v4 as uuidv4 } from "uuid";
+
+interface DecomposedStep {
+    id: string;
+    description: string;
+    assignedTo: string;
+    dependency?: string;
+}
 
 export class DirectorAgent extends Agent {
     constructor(config: AgentConfig) {
@@ -11,8 +15,12 @@ export class DirectorAgent extends Agent {
 
     // The Director's main job is to take a high-level goal and split it into subtasks
     // for other agents.
-    async decomposeTask(goal: string, availableAgents: Agent[], apiKey: string): Promise<any[]> {
-        const llm = createLLMClient(apiKey, "groq");
+    async decomposeTask(
+        goal: string,
+        availableAgents: Agent[],
+        apiKeys: Record<string, string | null | undefined>,
+    ): Promise<DecomposedStep[]> {
+        const llm = this.getLLMClient(apiKeys);
 
         const systemPrompt = `You are the Director. Your goal is to break down a complex task into smaller steps and assign them to the most suitable agent from the following list:
     
@@ -29,10 +37,13 @@ export class DirectorAgent extends Agent {
     
     Respond ONLY with the JSON array.`;
 
-        const response = await llm.chat([
-            { role: "system", content: systemPrompt },
-            { role: "user", content: goal }
-        ], { max_tokens: 4096, temperature: 0.2 });
+        const response = await llm.chat(
+            [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: goal }
+            ],
+            { max_tokens: 4096, temperature: 0.2 }
+        );
 
         try {
             // Basic cleaning of response (remove code blocks if present)

@@ -1,10 +1,20 @@
 import { Message } from "./core/types";
+import { SquadRunStep } from "./core/Squad";
+
+export interface SquadTraceTurn {
+    id: string;
+    timestamp: number;
+    userMessage: string;
+    status: "completed" | "needs_user_input" | "blocked" | "max_iterations";
+    steps: SquadRunStep[];
+}
 
 export interface Conversation {
     id: string;
     agentId: string;
     title: string;
     messages: Message[];
+    squadTrace?: SquadTraceTurn[];
     createdAt: number;
     updatedAt: number;
 }

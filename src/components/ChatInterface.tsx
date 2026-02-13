@@ -1,33 +1,152 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { AgentConfig } from "@/lib/core/Agent";
 import { getAgentPersonality } from "@/lib/agentPersonality";
 import { Message } from "@/lib/core/types";
-import { Send, Cat, Paperclip, Mic, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { Send, Paperclip, Mic, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTTS, useSTT } from "@/hooks/useAudio";
 
 interface ChatInterfaceProps {
     agent: AgentConfig;
+    participantAgents?: AgentConfig[];
     onSendMessage: (text: string) => Promise<void>;
     messages: Message[];
     isProcessing: boolean;
+    slashCommands?: SlashCommandOption[];
 }
 
-export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: ChatInterfaceProps) {
+export interface SlashCommandOption {
+    command: string;
+    description: string;
+}
+
+function TypewriterContent({ text, enabled }: { text: string; enabled: boolean }) {
+    const [visibleChars, setVisibleChars] = useState(() => (enabled ? 0 : text.length));
+
+    useEffect(() => {
+        if (!enabled || visibleChars >= text.length) {
+            return;
+        }
+
+        const step = text.length > 1800 ? 12 : text.length > 900 ? 8 : text.length > 450 ? 5 : 3;
+        const intervalId = window.setInterval(() => {
+            setVisibleChars((prev) => {
+                const next = Math.min(text.length, prev + step);
+                if (next >= text.length) {
+                    window.clearInterval(intervalId);
+                }
+                return next;
+            });
+        }, 16);
+
+        return () => window.clearInterval(intervalId);
+    }, [enabled, text.length, visibleChars]);
+
+    if (enabled && visibleChars < text.length) {
+        return <div className="whitespace-pre-wrap">{text.slice(0, visibleChars)}</div>;
+    }
+
+    return <ReactMarkdown>{text}</ReactMarkdown>;
+}
+
+export function ChatInterface({
+    agent,
+    participantAgents = [],
+    onSendMessage,
+    messages,
+    isProcessing,
+    slashCommands = [],
+}: ChatInterfaceProps) {
     const [input, setInput] = useState("");
     const scrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [baselineMessageIds] = useState<Set<string>>(() => new Set(messages.map((msg) => msg.id)));
+    const autoPlayedMessageIdsRef = useRef<Set<string>>(new Set());
     const personality = getAgentPersonality(agent);
 
     // Audio hooks
     const { speak, stop, isSpeaking, isLoading: ttsLoading } = useTTS();
-    const { isRecording, isTranscribing, startRecording, stopRecording, cancelRecording } = useSTT();
+    const { isRecording, isTranscribing, startRecording, stopRecording } = useSTT();
 
     // Track which message is being spoken
     const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+    const normalizedInput = input.trimStart();
+    const isSlashInput = normalizedInput.startsWith("/");
+    const slashCommandToken = isSlashInput ? normalizedInput.split(/\s+/)[0].toLowerCase() : "";
+    const matchingSlashCommands = isSlashInput
+        ? slashCommands.filter((cmd) => {
+            if (slashCommandToken === "/") return true;
+            return cmd.command.toLowerCase().startsWith(slashCommandToken);
+        })
+        : [];
+    const visibleSlashCommands = isSlashInput
+        ? (matchingSlashCommands.length > 0 ? matchingSlashCommands : slashCommands)
+        : [];
+    const showSlashCommands = visibleSlashCommands.length > 0;
+
+    const allParticipants = useMemo(() => {
+        const byId = new Map<string, AgentConfig>();
+        const entries = [agent, ...participantAgents];
+        for (const item of entries) {
+            if (item.id) {
+                byId.set(item.id, item);
+            }
+        }
+        return Array.from(byId.values());
+    }, [agent, participantAgents]);
+
+    const participantsById = useMemo(() => {
+        const map = new Map<string, AgentConfig>();
+        for (const participant of allParticipants) {
+            if (participant.id) map.set(participant.id, participant);
+        }
+        return map;
+    }, [allParticipants]);
+
+    const participantsByName = useMemo(() => {
+        const map = new Map<string, AgentConfig>();
+        for (const participant of allParticipants) {
+            const name = participant.name?.trim().toLowerCase();
+            if (name) map.set(name, participant);
+        }
+        return map;
+    }, [allParticipants]);
+
+    const resolveSpeaker = useCallback((msg: Message): AgentConfig => {
+        if (msg.agentId && participantsById.has(msg.agentId)) {
+            return participantsById.get(msg.agentId)!;
+        }
+        const normalizedName = msg.name?.trim().toLowerCase();
+        if (normalizedName && participantsByName.has(normalizedName)) {
+            return participantsByName.get(normalizedName)!;
+        }
+        return agent;
+    }, [agent, participantsById, participantsByName]);
+
+    const resolveStyle = useCallback((msg: Message, speaker: AgentConfig): string => (
+        msg.agentStyle || speaker.style || "assistant"
+    ), []);
+
+    const shouldTypewriter = useCallback((msg: Message, speaker: AgentConfig): boolean => {
+        if (msg.role !== "assistant") return false;
+        if (baselineMessageIds.has(msg.id)) return false;
+        if (msg.typewriter) return true;
+        return resolveStyle(msg, speaker) === "character";
+    }, [baselineMessageIds, resolveStyle]);
+
+    const shouldAutoPlay = useCallback((msg: Message, speaker: AgentConfig): boolean => {
+        if (msg.role !== "assistant") return false;
+        if (baselineMessageIds.has(msg.id)) return false;
+        if (msg.autoPlay) return true;
+        return resolveStyle(msg, speaker) === "character";
+    }, [baselineMessageIds, resolveStyle]);
+
+    const resolveVoiceId = useCallback((msg: Message, speaker: AgentConfig): string => (
+        msg.voiceId || speaker.voiceId || agent.voiceId || "en-US-ChristopherNeural"
+    ), [agent.voiceId]);
 
     // Auto-scroll to bottom
     useEffect(() => {
@@ -44,6 +163,19 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
         }
     }, [input]);
 
+    useEffect(() => {
+        const latestAssistant = [...messages].reverse().find((msg) => msg.role === "assistant");
+        if (!latestAssistant) return;
+        if (autoPlayedMessageIdsRef.current.has(latestAssistant.id)) return;
+
+        const speaker = resolveSpeaker(latestAssistant);
+        if (!shouldAutoPlay(latestAssistant, speaker)) return;
+
+        autoPlayedMessageIdsRef.current.add(latestAssistant.id);
+        const voiceId = resolveVoiceId(latestAssistant, speaker);
+        speak(latestAssistant.content, voiceId).finally(() => setSpeakingMsgId(null));
+    }, [messages, resolveSpeaker, resolveVoiceId, shouldAutoPlay, speak]);
+
     const handleSend = (text?: string) => {
         const msg = text || input;
         if (!msg.trim() || isProcessing) return;
@@ -55,6 +187,12 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === "Tab" && showSlashCommands) {
+            e.preventDefault();
+            setInput(`${visibleSlashCommands[0].command} `);
+            return;
+        }
+
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSend();
@@ -85,12 +223,15 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
     // ── TTS Playback ─────────────────────────────────
 
     const handleSpeak = (msg: Message) => {
+        const speaker = resolveSpeaker(msg);
+        const voiceId = resolveVoiceId(msg, speaker);
+
         if (isSpeaking && speakingMsgId === msg.id) {
             stop();
             setSpeakingMsgId(null);
         } else {
             setSpeakingMsgId(msg.id);
-            speak(msg.content, agent.voiceId).finally(() => setSpeakingMsgId(null));
+            speak(msg.content, voiceId).finally(() => setSpeakingMsgId(null));
         }
     };
 
@@ -141,59 +282,72 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
                         </div>
                     ) : (
                         <AnimatePresence initial={false}>
-                            {messages.map((msg) => (
-                                <motion.div
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    key={msg.id}
-                                    className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"
-                                        }`}
-                                >
-                                    <div className={`flex gap-4 max-w-[85%] md:max-w-[75%] ${msg.role === "user" ? "flex-row-reverse" : "flex-row text-left"
-                                        }`}>
+                            {messages.map((msg) => {
+                                const speaker = resolveSpeaker(msg);
+                                const messagePersonality = getAgentPersonality(speaker);
+                                const typewriterEnabled = shouldTypewriter(msg, speaker);
 
-                                        {/* Avatar (Only for Assistant) */}
-                                        {msg.role !== "user" && (
-                                            <div
-                                                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 shadow-sm text-base"
-                                                style={{ background: personality.gradient }}
-                                            >
-                                                <span>{personality.emoji}</span>
-                                            </div>
-                                        )}
+                                return (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        key={msg.id}
+                                        className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                                    >
+                                        <div className={`flex gap-4 max-w-[85%] md:max-w-[75%] ${msg.role === "user" ? "flex-row-reverse" : "flex-row text-left"}`}>
 
-                                        {/* Content Bubble */}
-                                        <div className={`text-[15px] leading-relaxed selection:bg-[#10a37f]/30 ${msg.role === "user"
-                                            ? "bg-[#2f2f2f] text-white px-5 py-3 rounded-3xl rounded-tr-sm shadow-sm"
-                                            : "text-[#ececec] py-1 px-1"
-                                            }`}>
-                                            <div className="prose prose-invert prose-p:leading-7 prose-pre:bg-black/50 prose-pre:border prose-pre:border-white/10 prose-pre:p-4 prose-pre:rounded-lg max-w-none break-words [&_p]:!my-0 [&_*:first-child]:!mt-0 [&_*:last-child]:!mb-0">
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
-                                            </div>
-
-                                            {/* TTS Button (assistant messages only) */}
-                                            {msg.role === "assistant" && (
-                                                <div className="mt-2 flex items-center gap-1">
-                                                    <button
-                                                        onClick={() => handleSpeak(msg)}
-                                                        className={`p-1.5 rounded-md transition-all text-[#8e8ea0] hover:text-[#ececec] hover:bg-[#2f2f2f] ${isSpeaking && speakingMsgId === msg.id ? "text-[#10a37f] bg-[#10a37f]/10" : ""
-                                                            }`}
-                                                        title={isSpeaking && speakingMsgId === msg.id ? "Stop speaking" : "Read aloud"}
-                                                    >
-                                                        {ttsLoading && speakingMsgId === msg.id ? (
-                                                            <Loader2 size={14} className="animate-spin" />
-                                                        ) : isSpeaking && speakingMsgId === msg.id ? (
-                                                            <VolumeX size={14} />
-                                                        ) : (
-                                                            <Volume2 size={14} />
-                                                        )}
-                                                    </button>
+                                            {/* Avatar (Only for Assistant/System) */}
+                                            {msg.role !== "user" && (
+                                                <div
+                                                    className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 shadow-sm text-base"
+                                                    style={{ background: messagePersonality.gradient }}
+                                                >
+                                                    <span>{messagePersonality.emoji}</span>
                                                 </div>
                                             )}
+
+                                            {/* Content Bubble */}
+                                            <div className={`text-[15px] leading-relaxed selection:bg-[#10a37f]/30 ${
+                                                msg.role === "user"
+                                                    ? "bg-[#2f2f2f] text-white px-5 py-3 rounded-3xl rounded-tr-sm shadow-sm"
+                                                    : "text-[#ececec] py-1 px-1"
+                                            }`}
+                                            >
+                                                {msg.role !== "user" && msg.name && (
+                                                    <div className="text-[11px] uppercase tracking-wide text-[#8e8ea0] mb-1.5 font-semibold">
+                                                        {msg.name}
+                                                    </div>
+                                                )}
+
+                                                <div className="prose prose-invert prose-p:leading-7 prose-pre:bg-black/50 prose-pre:border prose-pre:border-white/10 prose-pre:p-4 prose-pre:rounded-lg max-w-none break-words [&_p]:!my-0 [&_*:first-child]:!mt-0 [&_*:last-child]:!mb-0">
+                                                    <TypewriterContent text={msg.content} enabled={typewriterEnabled} />
+                                                </div>
+
+                                                {/* TTS Button (assistant messages only) */}
+                                                {msg.role === "assistant" && (
+                                                    <div className="mt-2 flex items-center gap-1">
+                                                        <button
+                                                            onClick={() => handleSpeak(msg)}
+                                                            className={`p-1.5 rounded-md transition-all text-[#8e8ea0] hover:text-[#ececec] hover:bg-[#2f2f2f] ${
+                                                                isSpeaking && speakingMsgId === msg.id ? "text-[#10a37f] bg-[#10a37f]/10" : ""
+                                                            }`}
+                                                            title={isSpeaking && speakingMsgId === msg.id ? "Stop speaking" : "Read aloud"}
+                                                        >
+                                                            {ttsLoading && speakingMsgId === msg.id ? (
+                                                                <Loader2 size={14} className="animate-spin" />
+                                                            ) : isSpeaking && speakingMsgId === msg.id ? (
+                                                                <VolumeX size={14} />
+                                                            ) : (
+                                                                <Volume2 size={14} />
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                </motion.div>
-                            ))}
+                                    </motion.div>
+                                );
+                            })}
                         </AnimatePresence>
                     )}
 
@@ -224,7 +378,28 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
 
             {/* Input Area */}
             <div className="w-full px-4 pt-2 pb-6 z-20 bg-[#212121]">
-                <div className="max-w-3xl mx-auto w-full">
+                <div className="max-w-3xl mx-auto w-full relative">
+                    {showSlashCommands && (
+                        <div className="absolute left-0 right-0 bottom-full mb-2 z-30">
+                            <div className="bg-[#171717] border border-white/10 rounded-xl shadow-xl overflow-hidden">
+                                {visibleSlashCommands.map((cmd) => (
+                                    <button
+                                        key={cmd.command}
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            setInput(`${cmd.command} `);
+                                            textareaRef.current?.focus();
+                                        }}
+                                        className="w-full px-4 py-2.5 text-left hover:bg-[#2f2f2f] transition-colors border-b border-white/5 last:border-b-0"
+                                    >
+                                        <div className="text-xs font-mono text-[#10a37f]">{cmd.command}</div>
+                                        <div className="text-xs text-[#b4b4b4] mt-0.5">{cmd.description}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <div className="relative flex items-end w-full p-3 bg-[#2f2f2f] rounded-[26px] border border-white/5 focus-within:border-white/20 transition-colors shadow-lg overflow-hidden ring-1 ring-black/5">
 
                         {/* Attach Button */}
@@ -251,12 +426,13 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
                         <button
                             onClick={handleMicClick}
                             disabled={isProcessing || isTranscribing}
-                            className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${isRecording
-                                ? "bg-red-500/20 text-red-400 animate-pulse hover:bg-red-500/30"
-                                : isTranscribing
-                                    ? "text-[#10a37f] cursor-wait"
-                                    : "text-[#b4b4b4] hover:text-[#ececec] hover:bg-[#424242]"
-                                }`}
+                            className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${
+                                isRecording
+                                    ? "bg-red-500/20 text-red-400 animate-pulse hover:bg-red-500/30"
+                                    : isTranscribing
+                                        ? "text-[#10a37f] cursor-wait"
+                                        : "text-[#b4b4b4] hover:text-[#ececec] hover:bg-[#424242]"
+                            }`}
                             title={isRecording ? "Stop recording" : "Voice input"}
                         >
                             {isTranscribing ? (
@@ -272,10 +448,11 @@ export function ChatInterface({ agent, onSendMessage, messages, isProcessing }: 
                         <button
                             onClick={() => handleSend()}
                             disabled={!input.trim() || isProcessing}
-                            className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${input.trim()
-                                ? "bg-[#ececec] text-black hover:bg-white"
-                                : "bg-[#676767] text-[#2f2f2f] cursor-not-allowed opacity-50"
-                                }`}
+                            className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${
+                                input.trim()
+                                    ? "bg-[#ececec] text-black hover:bg-white"
+                                    : "bg-[#676767] text-[#2f2f2f] cursor-not-allowed opacity-50"
+                            }`}
                         >
                             <Send size={18} strokeWidth={2.5} />
                         </button>

@@ -2,18 +2,21 @@
 
 import { useState, useEffect } from "react";
 import { useSettings } from "@/hooks/useSettings";
-import { AgentConfig } from "@/lib/core/Agent";
+import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
+import { SquadConfig, SquadRunStep, getSquadInteractionConfig, normalizeSquadConfig } from "@/lib/core/Squad";
 import { Message } from "@/lib/core/types";
 import { SettingsModal } from "@/components/SettingsModal";
-import { AgentCard } from "@/components/agent/AgentCard";
 import { AgentEditor } from "@/components/agent/AgentEditor";
-import { ChatInterface } from "@/components/ChatInterface";
+import { SquadEditor } from "@/components/agent/SquadEditor";
+import { ChatInterface, SlashCommandOption } from "@/components/ChatInterface";
 import defaultAgents from "@/lib/templates/default_agents.json";
-import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Cat } from "lucide-react";
+import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Cat, Users, ListTree } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { getAgentPersonality } from "@/lib/agentPersonality";
+import { PROVIDERS } from "@/lib/llm/constants";
 import {
   Conversation,
+  SquadTraceTurn,
   loadConversations,
   upsertConversation,
   deleteConversation as deleteConv,
@@ -21,25 +24,137 @@ import {
   generateTitle,
 } from "@/lib/conversations";
 
+const TEMPLATE_AGENTS = defaultAgents as AgentConfig[];
+const TEMPLATE_DEFAULT_AGENT =
+  TEMPLATE_AGENTS.find((agent) => agent.name?.trim().toLowerCase() === "default agent") ||
+  TEMPLATE_AGENTS[0];
+const DEFAULT_PROVIDER_ID = "groq";
+const DEFAULT_MODEL_ID = "llama-3.3-70b-versatile";
+const DEFAULT_VOICE_ID = "en-US-ChristopherNeural";
+const VALID_AGENT_STYLES = new Set<AgentStyle>(["assistant", "character", "expert", "custom"]);
+const ALLOWED_TOOL_IDS = new Set(["web_search", "fs_read", "fs_write", "shell_execute"]);
+
+const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
+  groq: "GROQ_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GEMINI_API_KEY",
+};
+
+const SLASH_COMMANDS: SlashCommandOption[] = [
+  {
+    command: "/create_cats",
+    description: "Generate one or more new agents from a natural-language request.",
+  },
+];
+
+interface ParsedSlashCommand {
+  name: string;
+  args: string;
+}
+
+interface CreateCatsGeneratedAgent {
+  name: string;
+  role: string;
+  description?: string;
+  style?: AgentStyle;
+  systemPrompt: string;
+  tools?: string[];
+  provider?: string;
+  model?: string;
+  voiceId?: string;
+}
+
+interface CreateCatsSuccessResponse {
+  action: "create_agents";
+  summary?: string;
+  agents: CreateCatsGeneratedAgent[];
+}
+
+interface CreateCatsQuestionResponse {
+  action: "request_information";
+  question: string;
+  reason?: string;
+}
+
+type CreateCatsApiResponse = CreateCatsSuccessResponse | CreateCatsQuestionResponse;
+
+const parseSlashCommand = (text: string): ParsedSlashCommand | null => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return null;
+
+  const [name, ...rest] = trimmed.split(/\s+/);
+  return {
+    name: name.toLowerCase(),
+    args: rest.join(" ").trim(),
+  };
+};
+
+const defaultModelForProvider = (providerId: string): string => {
+  const provider = PROVIDERS.find((candidate) => candidate.id === providerId);
+  return provider?.defaultModel || DEFAULT_MODEL_ID;
+};
+
+const resolveDefaultAgentId = (agentList: AgentConfig[]): string | null => {
+  if (agentList.length === 0) return null;
+
+  const byTemplateId = TEMPLATE_DEFAULT_AGENT?.id
+    ? agentList.find((agent) => agent.id === TEMPLATE_DEFAULT_AGENT.id)
+    : undefined;
+  if (byTemplateId?.id) return byTemplateId.id;
+
+  const byTemplateName = TEMPLATE_DEFAULT_AGENT?.name
+    ? agentList.find((agent) => agent.name === TEMPLATE_DEFAULT_AGENT.name)
+    : undefined;
+  if (byTemplateName?.id) return byTemplateName.id;
+
+  return agentList[0]?.id || null;
+};
+
+const normalizeSquadList = (raw: unknown): SquadConfig[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry): entry is SquadConfig => Boolean(entry && typeof entry === "object"))
+    .map((entry) => normalizeSquadConfig(entry));
+};
+
+const normalizeTraceStatus = (status: unknown): SquadTraceTurn["status"] => {
+  const value = String(status || "completed");
+  if (value === "needs_user_input" || value === "blocked" || value === "max_iterations") {
+    return value;
+  }
+  return "completed";
+};
+
 export default function CEODashboard() {
-  const { apiKey } = useSettings();
+  const { apiKey, apiKeys, serverConfiguredKeys } = useSettings();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [squads, setSquads] = useState<SquadConfig[]>([]);
+  const hasAnyApiKeyConfigured =
+    Object.values(apiKeys).some((k) => Boolean(k && k.trim())) ||
+    Object.values(serverConfiguredKeys).some(Boolean);
 
   // Selection
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedSquadId, setSelectedSquadId] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentMessages, setCurrentMessages] = useState<Message[]>([]);
+  const [currentSquadTrace, setCurrentSquadTrace] = useState<SquadTraceTurn[]>([]);
+  const [isMasterLogOpen, setIsMasterLogOpen] = useState(false);
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHiringOpen, setIsHiringOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentConfig | undefined>(undefined);
+  const [isSquadEditorOpen, setIsSquadEditorOpen] = useState(false);
+  const [editingSquad, setEditingSquad] = useState<SquadConfig | undefined>(undefined);
 
   // Loading State
   const [isProcessing, setIsProcessing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [agentMenuOpen, setAgentMenuOpen] = useState<string | null>(null);
+  const [squadMenuOpen, setSquadMenuOpen] = useState<string | null>(null);
   const [chatMenuOpen, setChatMenuOpen] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -47,10 +162,36 @@ export default function CEODashboard() {
   // Load agents on mount
   useEffect(() => {
     const storedAgents = localStorage.getItem("cat_gpt_agents");
+    let loadedAgents: AgentConfig[] = [];
+
     if (storedAgents) {
-      setAgents(JSON.parse(storedAgents));
+      try {
+        loadedAgents = JSON.parse(storedAgents) as AgentConfig[];
+      } catch {
+        loadedAgents = TEMPLATE_AGENTS;
+      }
     } else {
-      setAgents(defaultAgents);
+      loadedAgents = TEMPLATE_AGENTS;
+    }
+
+    setAgents(loadedAgents);
+
+    const defaultAgentId = resolveDefaultAgentId(loadedAgents);
+    if (defaultAgentId) {
+      setSelectedAgentId(defaultAgentId);
+      setSelectedSquadId(null);
+    }
+  }, []);
+
+  // Load squads on mount
+  useEffect(() => {
+    const storedSquads = localStorage.getItem("cat_gpt_squads");
+    if (storedSquads) {
+      try {
+        setSquads(normalizeSquadList(JSON.parse(storedSquads)));
+      } catch {
+        setSquads([]);
+      }
     }
   }, []);
 
@@ -65,8 +206,10 @@ export default function CEODashboard() {
       const allConvos = loadConversations();
       const conv = allConvos.find(c => c.id === activeConversationId);
       setCurrentMessages(conv?.messages || []);
+      setCurrentSquadTrace(conv?.squadTrace || []);
     } else {
       setCurrentMessages([]);
+      setCurrentSquadTrace([]);
     }
   }, [activeConversationId]);
 
@@ -75,31 +218,263 @@ export default function CEODashboard() {
     localStorage.setItem("cat_gpt_agents", JSON.stringify(newAgents));
   };
 
+  const saveSquads = (newSquads: SquadConfig[]) => {
+    const normalized = normalizeSquadList(newSquads);
+    setSquads(normalized);
+    localStorage.setItem("cat_gpt_squads", JSON.stringify(normalized));
+  };
+
   const refreshConversations = () => {
     setConversations(loadConversations().sort((a, b) => b.updatedAt - a.updatedAt));
   };
 
+  const hasProviderKeyConfigured = (providerId: string): boolean => {
+    const localKey = apiKeys[providerId];
+    if (typeof localKey === "string" && localKey.trim().length > 0) return true;
+
+    const envKey = PROVIDER_ENV_KEY_MAP[providerId];
+    if (envKey && serverConfiguredKeys[envKey]) return true;
+    if (serverConfiguredKeys[providerId]) return true;
+    return false;
+  };
+
+  const resolveCreateCatsProvider = (preferredProvider?: string, preferredModel?: string): { provider: string; model: string } => {
+    const providerIds = PROVIDERS.map((provider) => provider.id);
+    const normalizedPreferred = (preferredProvider || "").trim().toLowerCase();
+    const searchOrder = [
+      ...(normalizedPreferred ? [normalizedPreferred] : []),
+      ...providerIds.filter((providerId) => providerId !== normalizedPreferred),
+    ];
+
+    const providerWithKey = searchOrder.find((providerId) => hasProviderKeyConfigured(providerId));
+    const provider = providerWithKey || DEFAULT_PROVIDER_ID;
+    const model = provider === normalizedPreferred && preferredModel?.trim()
+      ? preferredModel.trim()
+      : defaultModelForProvider(provider);
+
+    return { provider, model };
+  };
+
+  const makeUniqueAgentName = (requestedName: string, takenNames: Set<string>): string => {
+    const baseName = requestedName.trim() || "New Cat";
+    if (!takenNames.has(baseName.toLowerCase())) {
+      takenNames.add(baseName.toLowerCase());
+      return baseName;
+    }
+
+    let suffix = 2;
+    while (true) {
+      const candidate = `${baseName} ${suffix}`;
+      const normalized = candidate.toLowerCase();
+      if (!takenNames.has(normalized)) {
+        takenNames.add(normalized);
+        return candidate;
+      }
+      suffix += 1;
+    }
+  };
+
+  const executeCreateCatsCommand = async (
+    prompt: string,
+    preferredProvider?: string,
+    preferredModel?: string,
+  ): Promise<{ role: "assistant" | "system"; content: string }> => {
+    const { provider, model } = resolveCreateCatsProvider(preferredProvider, preferredModel);
+    const response = await fetch("/api/agents/create-cats", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-groq-api-key": apiKey || "",
+        "x-api-keys": JSON.stringify(apiKeys),
+      },
+      body: JSON.stringify({
+        prompt,
+        provider,
+        model,
+        existingAgents: agents.map((agent) => ({
+          name: agent.name,
+          role: agent.role,
+        })),
+      }),
+    });
+
+    const data = await response.json() as (CreateCatsApiResponse & { error?: string; details?: string });
+    if (!response.ok || data.error) {
+      throw new Error(data.error || data.details || "Failed to run /create_cats.");
+    }
+
+    if (data.action === "request_information") {
+      return {
+        role: "assistant",
+        content: data.question.trim() || "Please share what you want these new cat agents to do.",
+      };
+    }
+
+    const generatedAgents = Array.isArray(data.agents) ? data.agents : [];
+    if (generatedAgents.length === 0) {
+      return {
+        role: "assistant",
+        content: "I couldn't generate any usable agent instructions yet. Tell me what responsibilities these cats should cover.",
+      };
+    }
+
+    const takenNames = new Set(agents.map((agent) => (agent.name || "").toLowerCase()));
+    const createdAgents: AgentConfig[] = generatedAgents.map((generated, index) => {
+      const requestedName = typeof generated.name === "string" ? generated.name : "";
+      const name = makeUniqueAgentName(requestedName || `New Cat ${index + 1}`, takenNames);
+      const role = (typeof generated.role === "string" && generated.role.trim())
+        ? generated.role.trim()
+        : "Assistant";
+      const description = typeof generated.description === "string" ? generated.description.trim() : "";
+      const style = typeof generated.style === "string" && VALID_AGENT_STYLES.has(generated.style as AgentStyle)
+        ? generated.style as AgentStyle
+        : "assistant";
+      const providerId = typeof generated.provider === "string" && generated.provider.trim()
+        ? generated.provider.trim().toLowerCase()
+        : provider;
+      const resolvedProvider = PROVIDERS.some((candidate) => candidate.id === providerId)
+        ? providerId
+        : provider;
+      const resolvedModel = (typeof generated.model === "string" && generated.model.trim())
+        ? generated.model.trim()
+        : defaultModelForProvider(resolvedProvider);
+      const systemPromptRaw = typeof generated.systemPrompt === "string" ? generated.systemPrompt.trim() : "";
+      const systemPrompt = systemPromptRaw || [
+        `You are ${name}, a ${role}.`,
+        "",
+        "Behavior:",
+        `- Help with this mission: ${prompt.trim() || "Support the user effectively."}`,
+        "- Be clear, practical, and concise.",
+        "- Ask clarifying questions only when critical details are missing.",
+      ].join("\n");
+      const voiceId = (typeof generated.voiceId === "string" && generated.voiceId.trim())
+        ? generated.voiceId.trim()
+        : DEFAULT_VOICE_ID;
+      const tools = Array.isArray(generated.tools)
+        ? generated.tools
+          .filter((tool): tool is string => typeof tool === "string")
+          .map((tool) => tool.trim())
+          .filter((tool) => Boolean(tool) && ALLOWED_TOOL_IDS.has(tool))
+        : [];
+
+      return {
+        id: uuidv4(),
+        name,
+        role,
+        description: description.slice(0, 120),
+        style,
+        systemPrompt,
+        provider: resolvedProvider,
+        model: resolvedModel,
+        voiceId,
+        tools,
+      };
+    });
+
+    const updatedAgents = [...agents, ...createdAgents];
+    saveAgents(updatedAgents);
+
+    const summary = typeof data.summary === "string" && data.summary.trim()
+      ? data.summary.trim()
+      : `Created ${createdAgents.length} new cat agent${createdAgents.length > 1 ? "s" : ""}.`;
+    const createdList = createdAgents
+      .map((agent) => `- **${agent.name}** (${agent.role})`)
+      .join("\n");
+
+    return {
+      role: "assistant",
+      content: `${summary}\n\nAdded to your litter:\n${createdList}`,
+    };
+  };
+
+  const executeSlashCommand = async (
+    command: ParsedSlashCommand,
+    targetAgent?: AgentConfig,
+    targetSquad?: SquadConfig,
+  ): Promise<{ role: "assistant" | "system"; content: string }> => {
+    if (command.name === "/create_cats") {
+      const squadDirector = targetSquad
+        ? agents.find((agent) => agent.id === targetSquad.directorId)
+        : undefined;
+
+      return executeCreateCatsCommand(
+        command.args,
+        targetAgent?.provider || squadDirector?.provider,
+        targetAgent?.model || squadDirector?.model,
+      );
+    }
+
+    const commandList = SLASH_COMMANDS.map((entry) => entry.command).join(", ");
+    return {
+      role: "system",
+      content: `Unknown slash command: ${command.name}\n\nAvailable commands: ${commandList}`,
+    };
+  };
+
   const handleSelectAgent = (agentId: string) => {
     setSelectedAgentId(agentId);
+    setSelectedSquadId(null);
     setAgentMenuOpen(null);
+    setSquadMenuOpen(null);
     setChatMenuOpen(null);
     // Start fresh (no active conversation — shows agent landing page)
     setActiveConversationId(null);
     setCurrentMessages([]);
+    setCurrentSquadTrace([]);
+    setIsMasterLogOpen(false);
+  };
+
+  const handleSelectSquad = (squadId: string) => {
+    setSelectedSquadId(squadId);
+    setSelectedAgentId(null);
+    setAgentMenuOpen(null);
+    setSquadMenuOpen(null);
+    setChatMenuOpen(null);
+    setActiveConversationId(null);
+    setCurrentMessages([]);
+    setCurrentSquadTrace([]);
   };
 
   const handleNewChat = () => {
     setActiveConversationId(null);
     setCurrentMessages([]);
+    setCurrentSquadTrace([]);
+    setSquadMenuOpen(null);
+    setChatMenuOpen(null);
+    setIsMasterLogOpen(false);
+
+    if (!selectedAgentId && !selectedSquadId) {
+      const defaultAgentId = resolveDefaultAgentId(agents);
+      if (defaultAgentId) {
+        setSelectedAgentId(defaultAgentId);
+      }
+    }
   };
 
   const handleSelectConversation = (convId: string) => {
     const conv = conversations.find(c => c.id === convId);
     if (conv) {
-      // Auto-select the linked agent
-      setSelectedAgentId(conv.agentId);
+      let found = false;
+      const linkedAgent = agents.find((a) => a.id === conv.agentId);
+      if (linkedAgent) {
+        setSelectedAgentId(linkedAgent.id || null);
+        setSelectedSquadId(null);
+        found = true;
+      } else {
+        const linkedSquad = squads.find((s) => s.id === conv.agentId);
+        if (linkedSquad) {
+          setSelectedSquadId(linkedSquad.id || null);
+          setSelectedAgentId(null);
+          found = true;
+        }
+      }
+      if (!found) {
+        setSelectedAgentId(null);
+        setSelectedSquadId(null);
+      }
     }
     setActiveConversationId(convId);
+    setSquadMenuOpen(null);
     setChatMenuOpen(null);
   };
 
@@ -111,6 +486,8 @@ export default function CEODashboard() {
       if (activeConversationId === convId) {
         setActiveConversationId(null);
         setCurrentMessages([]);
+        setCurrentSquadTrace([]);
+        setIsMasterLogOpen(false);
       }
       refreshConversations();
     }
@@ -126,11 +503,129 @@ export default function CEODashboard() {
     setChatMenuOpen(null);
   };
 
-  const handleSendMessage = async (text: string) => {
-    if (!selectedAgentId || !apiKey) return;
+  const handleEditSquad = (squad: SquadConfig) => {
+    setEditingSquad(squad);
+    setIsSquadEditorOpen(true);
+    setSquadMenuOpen(null);
+  };
 
-    const targetAgent = agents.find(a => a.id === selectedAgentId);
-    if (!targetAgent) return;
+  const handleDeleteSquad = (squad: SquadConfig) => {
+    const confirmed = window.confirm(`Disband squad "${squad.name}"?`);
+    if (!confirmed) {
+      setSquadMenuOpen(null);
+      return;
+    }
+
+    const updatedSquads = squads.filter((s) => s.id !== squad.id);
+    saveSquads(updatedSquads);
+
+    if (selectedSquadId === squad.id) {
+      setSelectedSquadId(null);
+      setActiveConversationId(null);
+      setCurrentMessages([]);
+      setCurrentSquadTrace([]);
+      setIsMasterLogOpen(false);
+    }
+
+    const activeConversation = conversations.find((c) => c.id === activeConversationId);
+    if (activeConversation && activeConversation.agentId === squad.id) {
+      setActiveConversationId(null);
+      setCurrentMessages([]);
+      setCurrentSquadTrace([]);
+      setIsMasterLogOpen(false);
+    }
+
+    setSquadMenuOpen(null);
+  };
+
+  const createAgentAssistantMessage = (
+    content: string,
+    speaker: AgentConfig | undefined,
+    fallbackName: string,
+    interactionConfig?: ReturnType<typeof getSquadInteractionConfig>,
+  ): Message => {
+    const style = speaker?.style && VALID_AGENT_STYLES.has(speaker.style) ? speaker.style : "assistant";
+    const isCharacter = style === "character";
+    const allowCharacterTypewriter = Boolean(interactionConfig?.typewriterCharacterMessages);
+    const allowCharacterAutoplay = Boolean(interactionConfig?.autoPlayCharacterVoices);
+
+    return {
+      id: uuidv4(),
+      role: "assistant",
+      name: speaker?.name || fallbackName,
+      content,
+      timestamp: Date.now(),
+      agentId: speaker?.id,
+      agentStyle: style,
+      voiceId: speaker?.voiceId || DEFAULT_VOICE_ID,
+      typewriter: allowCharacterTypewriter && isCharacter,
+      autoPlay: allowCharacterAutoplay && isCharacter,
+    };
+  };
+
+  const buildSquadStepMessages = (
+    squad: SquadConfig,
+    stepList: SquadRunStep[],
+  ): Message[] => {
+    const interactionConfig = getSquadInteractionConfig(squad);
+    if (!interactionConfig.showAgentMessagesInChat || stepList.length === 0) {
+      return [];
+    }
+
+    const participants = agents.filter((agent) => {
+      const id = agent.id || "";
+      return id === squad.directorId || squad.members.includes(id);
+    });
+    const byId = new Map(participants.map((agent) => [agent.id || "", agent]));
+    const director = byId.get(squad.directorId);
+    const output: Message[] = [];
+
+    for (const step of stepList) {
+      if (interactionConfig.includeDirectorMessagesInChat) {
+        const summary = step.directorDecision.summary?.trim();
+        if (summary) {
+          const assignment = step.workerAgentName && step.workerInstruction
+            ? `\n\nAssigned to ${step.workerAgentName}: ${step.workerInstruction}`
+            : "";
+          output.push(
+            createAgentAssistantMessage(
+              `${summary}${assignment}`,
+              director,
+              "Director",
+              interactionConfig,
+            ),
+          );
+        }
+      }
+
+      if (step.workerOutput?.trim()) {
+        const worker = step.workerAgentId ? byId.get(step.workerAgentId) : undefined;
+        output.push(
+          createAgentAssistantMessage(
+            step.workerOutput.trim(),
+            worker,
+            step.workerAgentName || "Worker",
+            interactionConfig,
+          ),
+        );
+      }
+    }
+
+    return output;
+  };
+
+  const handleSendMessage = async (text: string) => {
+    if ((!selectedAgentId && !selectedSquadId) || !hasAnyApiKeyConfigured) return;
+
+    const slashCommand = parseSlashCommand(text);
+    const targetAgent = selectedAgentId ? agents.find(a => a.id === selectedAgentId) : undefined;
+    const targetSquadRaw = selectedSquadId ? squads.find(s => s.id === selectedSquadId) : undefined;
+    const targetSquad = targetSquadRaw ? normalizeSquadConfig(targetSquadRaw) : undefined;
+    const isSquadMode = Boolean(targetSquad);
+    if (!targetAgent && !targetSquad) return;
+
+    const selectedParticipantId = selectedAgentId || selectedSquadId || null;
+    if (!selectedParticipantId) return;
 
     // Create or use existing conversation
     let convId = activeConversationId;
@@ -150,15 +645,17 @@ export default function CEODashboard() {
     };
 
     const updatedMessages = [...currentMessages, newUserMsg];
+    const existingTrace = currentSquadTrace;
     setCurrentMessages(updatedMessages);
     setActiveConversationId(convId);
 
     // Save conversation immediately (so it appears in history)
     const conv: Conversation = {
       id: convId,
-      agentId: selectedAgentId,
+      agentId: selectedParticipantId,
       title: isNew ? generateTitle(text) : (conversations.find(c => c.id === convId)?.title || generateTitle(text)),
       messages: updatedMessages,
+      squadTrace: existingTrace,
       createdAt: isNew ? Date.now() : (conversations.find(c => c.id === convId)?.createdAt || Date.now()),
       updatedAt: Date.now(),
     };
@@ -168,16 +665,45 @@ export default function CEODashboard() {
     setIsProcessing(true);
 
     try {
+      if (slashCommand) {
+        const commandResult = await executeSlashCommand(slashCommand, targetAgent, targetSquad);
+        const commandReply: Message = {
+          id: uuidv4(),
+          role: commandResult.role,
+          name: commandResult.role === "assistant"
+            ? (targetAgent?.name || targetSquad?.name || "System")
+            : undefined,
+          content: commandResult.content,
+          timestamp: Date.now(),
+        };
+
+        const finalMessages = [...updatedMessages, commandReply];
+        setCurrentMessages(finalMessages);
+        setCurrentSquadTrace(existingTrace);
+
+        upsertConversation({
+          ...conv,
+          messages: finalMessages,
+          squadTrace: existingTrace,
+          updatedAt: Date.now(),
+        });
+        refreshConversations();
+        return;
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-groq-api-key": apiKey
+          "x-groq-api-key": apiKey || "",
+          "x-api-keys": JSON.stringify(apiKeys),
         },
         body: JSON.stringify({
           message: text,
-          history: updatedMessages,
-          agentConfig: targetAgent
+          history: currentMessages,
+          ...(isSquadMode
+            ? { squadConfig: targetSquad, agents }
+            : { agentConfig: targetAgent })
         })
       });
 
@@ -187,31 +713,70 @@ export default function CEODashboard() {
         throw new Error(data.error);
       }
 
-      const newAssistantMsg: Message = {
-        id: uuidv4(),
-        role: "assistant",
-        name: targetAgent.name,
-        content: data.response,
-        timestamp: Date.now()
-      };
+      const responseText = typeof data.response === "string" ? data.response : "";
+      const squadSteps = Array.isArray(data.squadSteps) ? (data.squadSteps as SquadRunStep[]) : [];
+      const interactionConfig = targetSquad ? getSquadInteractionConfig(targetSquad) : undefined;
+      const visibleStepMessages = targetSquad ? buildSquadStepMessages(targetSquad, squadSteps) : [];
 
-      const finalMessages = [...updatedMessages, newAssistantMsg];
+      const finalAssistantMessages: Message[] = [];
+      if (isSquadMode && targetSquad) {
+        finalAssistantMessages.push(...visibleStepMessages);
+      }
+
+      if (!isSquadMode) {
+        finalAssistantMessages.push(
+          createAgentAssistantMessage(responseText, targetAgent, targetAgent?.name || "Assistant"),
+        );
+      } else if (targetSquad) {
+        const director = agents.find((agent) => agent.id === targetSquad.directorId);
+        const lastVisibleMessage = finalAssistantMessages[finalAssistantMessages.length - 1];
+        const shouldAppendFinal = responseText.trim().length > 0
+          && (!lastVisibleMessage || lastVisibleMessage.content.trim() !== responseText.trim());
+
+        if (shouldAppendFinal || finalAssistantMessages.length === 0) {
+          finalAssistantMessages.push(
+            createAgentAssistantMessage(
+              responseText || "The squad completed this turn.",
+              director,
+              director?.name || targetSquad.name,
+              interactionConfig,
+            ),
+          );
+        }
+      }
+
+      const finalMessages = [...updatedMessages, ...finalAssistantMessages];
       setCurrentMessages(finalMessages);
+      let finalTrace = existingTrace;
+      if (isSquadMode && squadSteps.length > 0) {
+        const normalizedStatus = normalizeTraceStatus(data.squadStatus);
+        const traceTurn: SquadTraceTurn = {
+          id: uuidv4(),
+          timestamp: Date.now(),
+          userMessage: text,
+          status: normalizedStatus,
+          steps: squadSteps,
+        };
+        finalTrace = [...existingTrace, traceTurn];
+      }
+      setCurrentSquadTrace(finalTrace);
 
       // Update conversation in storage
       upsertConversation({
         ...conv,
         messages: finalMessages,
+        squadTrace: finalTrace,
         updatedAt: Date.now(),
       });
       refreshConversations();
 
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Chat Failed", e);
+      const errorMessage = e instanceof Error ? e.message : "Unknown error";
       const errorMsg: Message = {
         id: uuidv4(),
         role: "system",
-        content: `Hiss! Something went wrong. ${e.message}`,
+        content: `Hiss! Something went wrong. ${errorMessage}`,
         timestamp: Date.now()
       };
       const finalMessages = [...updatedMessages, errorMsg];
@@ -220,6 +785,7 @@ export default function CEODashboard() {
       upsertConversation({
         ...conv,
         messages: finalMessages,
+        squadTrace: existingTrace,
         updatedAt: Date.now(),
       });
       refreshConversations();
@@ -256,6 +822,37 @@ export default function CEODashboard() {
   };
 
   const conversationGroups = groupConversations(conversations);
+  const selectedSquadRaw = selectedSquadId ? squads.find((s) => s.id === selectedSquadId) : undefined;
+  const selectedSquad = selectedSquadRaw ? normalizeSquadConfig(selectedSquadRaw) : undefined;
+  const selectedSquadInteraction = selectedSquad ? getSquadInteractionConfig(selectedSquad) : undefined;
+  const squadDirector = selectedSquad ? agents.find((a) => a.id === selectedSquad.directorId) : undefined;
+  const squadParticipants = selectedSquad
+    ? agents.filter((agent) => {
+      const id = agent.id || "";
+      return id === selectedSquad.directorId || selectedSquad.members.includes(id);
+    })
+    : [];
+  const selectedSquadChatAgent: AgentConfig | null = selectedSquad ? {
+    id: selectedSquad.id,
+    name: selectedSquad.name,
+    role: "Squad Orchestrator",
+    systemPrompt: selectedSquad.mission || "Coordinate worker agents to complete tasks.",
+    style: squadDirector?.style || "assistant",
+    voiceId: squadDirector?.voiceId || "en-US-ChristopherNeural",
+    provider: squadDirector?.provider || "groq",
+    model: squadDirector?.model || "llama-3.3-70b-versatile",
+    tools: [],
+  } : null;
+  const selectedAgent = selectedAgentId ? agents.find((a) => a.id === selectedAgentId) : undefined;
+  const activeChatAgent = selectedAgent || selectedSquadChatAgent;
+  const shouldShowMasterLog = Boolean(selectedSquad && selectedSquadInteraction?.showMasterLog);
+
+  const getTraceStatusColor = (status: SquadTraceTurn["status"]) => {
+    if (status === "completed") return "text-[#9ece6a] bg-[#9ece6a]/10 border-[#9ece6a]/20";
+    if (status === "needs_user_input") return "text-[#e0af68] bg-[#e0af68]/10 border-[#e0af68]/20";
+    if (status === "blocked") return "text-[#f7768e] bg-[#f7768e]/10 border-[#f7768e]/20";
+    return "text-[#7aa2f7] bg-[#7aa2f7]/10 border-[#7aa2f7]/20";
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#212121] text-[#ececec] font-sans">
@@ -351,6 +948,7 @@ export default function CEODashboard() {
                       <div
                         onClick={(e) => {
                           e.stopPropagation();
+                          setSquadMenuOpen(null);
                           setAgentMenuOpen(agentMenuOpen === agent.id ? null : (agent.id || null));
                         }}
                         className="p-1 rounded hover:bg-[#424242] transition-colors cursor-pointer"
@@ -381,6 +979,13 @@ export default function CEODashboard() {
                           const confirmed = window.confirm(`Release ${agent.name} back into the wild? 🐈`);
                           if (confirmed) {
                             saveAgents(agents.filter(a => a.id !== agent.id));
+                            const updatedSquads = squads
+                              .filter((s) => s.directorId !== agent.id)
+                              .map((s) => ({ ...s, members: s.members.filter((id) => id !== agent.id) }));
+                            saveSquads(updatedSquads);
+                            if (selectedSquadId && !updatedSquads.some((s) => s.id === selectedSquadId)) {
+                              setSelectedSquadId(null);
+                            }
                             if (selectedAgentId === agent.id) {
                               setSelectedAgentId(null);
                               setActiveConversationId(null);
@@ -411,6 +1016,99 @@ export default function CEODashboard() {
             </button>
           </div>
 
+          {/* Squads Section */}
+          <div className="text-xs font-semibold text-[#8e8ea0] px-3 py-2 mt-3 uppercase tracking-wider flex items-center justify-between flex-shrink-0">
+            <span className="flex items-center gap-2">
+              <Users size={12} className="text-[#10a37f]" />
+              Squads
+            </span>
+            <span className="text-[10px] font-normal text-[#565656]">{squads.length}</span>
+          </div>
+
+          <div className="space-y-1 pr-1 flex-shrink-0 max-h-[24%] overflow-y-auto custom-scrollbar">
+            {squads.map((squad) => {
+              const isSelected = selectedSquadId === squad.id;
+              const director = agents.find((a) => a.id === squad.directorId);
+              const memberCount = squad.members.length;
+
+              return (
+                <div key={squad.id} className="relative group">
+                  <button
+                    onClick={() => handleSelectSquad(squad.id || "")}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${isSelected
+                      ? "bg-[#2f2f2f] text-white"
+                      : "text-[#ececec] hover:bg-[#212121]"
+                      }`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-[#2f2f2f] border border-[#424242] flex items-center justify-center text-[#10a37f]">
+                      <Users size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0 text-left">
+                      <div className="text-[13px] font-medium leading-tight truncate">{squad.name}</div>
+                      <div className="text-[11px] text-[#8e8ea0] truncate">
+                        {memberCount} members • Director: {director?.name || "Unknown"}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`flex-shrink-0 transition-opacity ${isSelected || squadMenuOpen === squad.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        }`}
+                    >
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAgentMenuOpen(null);
+                          setSquadMenuOpen(squadMenuOpen === squad.id ? null : (squad.id || null));
+                        }}
+                        className="p-1 rounded hover:bg-[#424242] transition-colors cursor-pointer"
+                      >
+                        <MoreHorizontal size={14} className="text-[#8e8ea0]" />
+                      </div>
+                    </div>
+                  </button>
+
+                  {squadMenuOpen === squad.id && (
+                    <div className="absolute left-11 top-full mt-1 bg-[#2f2f2f] border border-white/10 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150 min-w-[180px]">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditSquad(squad);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
+                      >
+                        <Pencil size={12} />
+                        <span>Edit Squad</span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteSquad(squad);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                      >
+                        <Trash2 size={12} />
+                        <span>Disband Squad</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <button
+              onClick={() => {
+                setEditingSquad(undefined);
+                setIsSquadEditorOpen(true);
+              }}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-[#8e8ea0] hover:text-[#10a37f] hover:bg-[#10a37f]/5 transition-all mt-2 border border-dashed border-white/10 hover:border-[#10a37f]/30 group"
+            >
+              <div className="w-8 h-8 rounded-full border-2 border-dashed border-[#424242] group-hover:border-[#10a37f]/50 flex items-center justify-center transition-colors">
+                <Plus size={14} />
+              </div>
+              <span>Create Squad</span>
+            </button>
+          </div>
+
           {/* Chat History Section — Always visible */}
           <div className="text-xs font-semibold text-[#8e8ea0] px-3 py-2 mt-3 uppercase tracking-wider flex items-center gap-2 flex-shrink-0">
             <Clock size={12} className="text-[#565656]" />
@@ -421,7 +1119,7 @@ export default function CEODashboard() {
             {conversationGroups.length === 0 && (
               <div className="px-3 py-4 text-center text-xs text-[#565656]">
                 No conversations yet.<br />
-                Select a cat and start chatting! 🐾
+                Select an agent or squad and start chatting! 🐾
               </div>
             )}
 
@@ -432,7 +1130,9 @@ export default function CEODashboard() {
                 </div>
                 {group.items.map(conv => {
                   const convAgent = agents.find(a => a.id === conv.agentId);
+                  const convSquad = squads.find(s => s.id === conv.agentId);
                   const convPersonality = convAgent ? getAgentPersonality(convAgent) : null;
+                  const convLabel = convAgent?.name || convSquad?.name || "Unknown";
 
                   return (
                     <div key={conv.id} className="relative group">
@@ -459,8 +1159,8 @@ export default function CEODashboard() {
                             }`}
                         >
                           {/* Agent emoji indicator */}
-                          <span className="flex-shrink-0 text-sm" title={convAgent?.name || "Unknown agent"}>
-                            {convPersonality?.emoji || "💬"}
+                          <span className="flex-shrink-0 text-sm" title={convLabel}>
+                            {convPersonality?.emoji || (convSquad ? "👥" : "💬")}
                           </span>
                           <span className="flex-1 truncate">{conv.title}</span>
 
@@ -469,6 +1169,7 @@ export default function CEODashboard() {
                             className={`flex-shrink-0 transition-opacity ${activeConversationId === conv.id || chatMenuOpen === conv.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSquadMenuOpen(null);
                               setChatMenuOpen(chatMenuOpen === conv.id ? null : conv.id);
                             }}
                           >
@@ -556,7 +1257,7 @@ export default function CEODashboard() {
         {/* Chat Area */}
         <div className="flex-1 h-full relative">
           {/* API Key Modal Overlay */}
-          {!apiKey && (
+          {!hasAnyApiKeyConfigured && (
             <div className="absolute inset-0 z-[60] bg-[#212121]/80 backdrop-blur-sm flex items-center justify-center">
               <div className="bg-[#2f2f2f] border border-white/10 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center">
                 <div className="w-16 h-16 bg-[#10a37f]/20 text-[#10a37f] rounded-full flex items-center justify-center mx-auto mb-6">
@@ -576,12 +1277,15 @@ export default function CEODashboard() {
             </div>
           )}
 
-          {selectedAgentId ? (
+          {activeChatAgent ? (
             <ChatInterface
-              agent={agents.find(a => a.id === selectedAgentId)!}
+              key={`${activeConversationId || "draft"}-${activeChatAgent.id || "agent"}`}
+              agent={activeChatAgent}
+              participantAgents={selectedSquad ? squadParticipants : (selectedAgent ? [selectedAgent] : [])}
               messages={currentMessages}
               onSendMessage={handleSendMessage}
               isProcessing={isProcessing}
+              slashCommands={SLASH_COMMANDS}
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-[#ececec]">
@@ -602,9 +1306,10 @@ export default function CEODashboard() {
                   <button
                     key={i}
                     onClick={() => {
-                      const randomAgent = agents[0];
-                      if (randomAgent) {
-                        handleSelectAgent(randomAgent.id || "");
+                      if (agents[0]?.id) {
+                        handleSelectAgent(agents[0].id);
+                      } else if (squads[0]?.id) {
+                        handleSelectSquad(squads[0].id);
                       }
                     }}
                     className="p-4 bg-[#2f2f2f] hover:bg-[#424242] border border-white/5 rounded-xl text-left text-sm text-[#ececec] transition-colors flex items-center justify-between group"
@@ -614,6 +1319,85 @@ export default function CEODashboard() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {shouldShowMasterLog && (
+            <div className="absolute top-4 right-4 z-50 flex flex-col items-end gap-2">
+              <button
+                onClick={() => setIsMasterLogOpen((prev) => !prev)}
+                className="px-3 py-2 bg-[#2f2f2f] border border-white/10 rounded-lg text-xs text-[#ececec] hover:bg-[#3a3a3a] transition-colors flex items-center gap-2"
+              >
+                <ListTree size={14} />
+                {isMasterLogOpen ? "Hide Master Log" : "Show Master Log"}
+              </button>
+
+              {isMasterLogOpen && (
+                <div className="w-[calc(100vw-2rem)] sm:w-[380px] max-h-[75vh] bg-[#171717] border border-white/10 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+                  <div className="px-4 py-3 border-b border-white/10 bg-[#1f1f1f]">
+                    <div className="text-sm font-semibold text-white">Master Log</div>
+                    <div className="text-[11px] text-[#8e8ea0]">
+                      Director decisions and worker collaboration trace
+                    </div>
+                  </div>
+
+                  <div className="p-3 overflow-y-auto custom-scrollbar space-y-3">
+                    {currentSquadTrace.length === 0 && (
+                      <div className="text-xs text-[#8e8ea0] bg-[#212121] border border-white/10 rounded-lg p-3">
+                        No orchestration trace yet. Send a squad task to populate this panel.
+                      </div>
+                    )}
+
+                    {[...currentSquadTrace].reverse().map((turn, turnIndex) => (
+                      <div key={turn.id} className="bg-[#212121] border border-white/10 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-[#ececec]">
+                            Turn {currentSquadTrace.length - turnIndex}
+                          </span>
+                          <span className={`text-[10px] px-2 py-1 rounded border ${getTraceStatusColor(turn.status)}`}>
+                            {turn.status.replaceAll("_", " ")}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[#b4b4b4]">
+                          {new Date(turn.timestamp).toLocaleString()}
+                        </div>
+                        <div className="text-xs text-[#c0caf5] leading-relaxed">
+                          <span className="text-[#8e8ea0]">User:</span> {turn.userMessage}
+                        </div>
+
+                        <div className="space-y-2 pt-1">
+                          {turn.steps.map((step) => (
+                            <div key={`${turn.id}-${step.iteration}`} className="border border-white/10 rounded-md p-2 bg-[#171717]">
+                              <div className="text-[11px] text-[#8e8ea0] mb-1">Iteration {step.iteration}</div>
+                              <div className="text-xs text-[#ececec]">
+                                <span className="text-[#8e8ea0]">Director:</span> {step.directorDecision.summary}
+                              </div>
+                              <div className="text-[11px] text-[#b4b4b4] mt-1">
+                                Status: {step.directorDecision.status}
+                              </div>
+                              {step.workerAgentName && (
+                                <div className="mt-2 text-xs text-[#9ece6a]">
+                                  Worker: {step.workerAgentName}
+                                </div>
+                              )}
+                              {step.workerInstruction && (
+                                <div className="text-[11px] text-[#c0caf5] mt-1">
+                                  Task: {step.workerInstruction}
+                                </div>
+                              )}
+                              {step.workerOutput && (
+                                <pre className="mt-2 text-[11px] text-[#b4b4b4] whitespace-pre-wrap bg-black/30 border border-white/10 rounded p-2">
+                                  {step.workerOutput}
+                                </pre>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -636,6 +1420,30 @@ export default function CEODashboard() {
                 setIsHiringOpen(false);
               }}
               onCancel={() => setIsHiringOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {isSquadEditorOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl">
+            <SquadEditor
+              initialData={editingSquad}
+              availableAgents={agents}
+              onSave={(newSquad) => {
+                if (editingSquad?.id) {
+                  saveSquads(squads.map((s) => s.id === editingSquad.id ? { ...newSquad, id: editingSquad.id } : s));
+                } else {
+                  saveSquads([...squads, { ...newSquad, id: uuidv4() }]);
+                }
+                setIsSquadEditorOpen(false);
+                setEditingSquad(undefined);
+              }}
+              onCancel={() => {
+                setIsSquadEditorOpen(false);
+                setEditingSquad(undefined);
+              }}
             />
           </div>
         </div>

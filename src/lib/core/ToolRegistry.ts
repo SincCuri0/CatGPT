@@ -1,13 +1,15 @@
 import { Tool } from "./types";
+import { normalizeToolDefinition } from "./tooling/normalizeTool";
 
 export class ToolRegistry {
     private tools: Map<string, Tool> = new Map();
 
     register(tool: Tool) {
+        const normalized = normalizeToolDefinition(tool);
         if (this.tools.has(tool.id)) {
             console.warn(`Tool with ID ${tool.id} is already registered. Overwriting.`);
         }
-        this.tools.set(tool.id, tool);
+        this.tools.set(tool.id, normalized);
     }
 
     get(id: string): Tool | undefined {

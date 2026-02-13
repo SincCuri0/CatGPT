@@ -8,7 +8,7 @@ export const ShellExecuteTool: Tool = {
     id: "shell_execute",
     name: "execute_command",
     description: "Execute a shell command on the local machine. Use with caution.",
-    parameters: {
+    inputSchema: {
         type: "object",
         properties: {
             command: {
@@ -18,16 +18,23 @@ export const ShellExecuteTool: Tool = {
         },
         required: ["command"]
     },
-    execute: async (args: { command: string }) => {
+    execute: async (args: unknown) => {
         try {
+            const command = typeof (args as { command?: unknown })?.command === "string"
+                ? (args as { command: string }).command
+                : "";
             // Security warning: exact command execution
-            const { stdout, stderr } = await execAsync(args.command);
+            const { stdout, stderr } = await execAsync(command);
             if (stderr) {
                 return `STDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`;
             }
             return stdout || "Command executed successfully with no output.";
-        } catch (error: any) {
-            return `Error execution command: ${error.message}\nSTDOUT: ${error.stdout}\nSTDERR: ${error.stderr}`;
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                const detail = error as Error & { stdout?: string; stderr?: string };
+                return `Error execution command: ${detail.message}\nSTDOUT: ${detail.stdout ?? ""}\nSTDERR: ${detail.stderr ?? ""}`;
+            }
+            return `Error execution command: ${String(error)}`;
         }
     }
 };

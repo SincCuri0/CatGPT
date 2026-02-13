@@ -13,9 +13,9 @@ export async function getEnvVariable(key: string): Promise<string | null> {
         const fileContent = await fs.readFile(ENV_PATH, "utf-8");
         const lines = fileContent.split("\n");
         for (const line of lines) {
-            const [k, v] = line.split("=");
+            const [k, ...vParts] = line.split("=");
             if (k.trim() === key) {
-                return v.trim();
+                return vParts.join("=").trim();
             }
         }
         return null;
@@ -49,10 +49,21 @@ export async function setEnvVariable(key: string, value: string): Promise<void> 
         }
 
         await fs.writeFile(ENV_PATH, newLines.join("\n"));
-        // Update process.env for immediate use in this process (though limited scope in Next.js dev server context)
+        // Update process.env for immediate use in this process
         process.env[key] = value;
     } catch (e) {
         console.error("Failed to write to .env file", e);
         throw e;
     }
+}
+
+export async function getAllApiKeys(): Promise<Record<string, boolean>> {
+    const keys = ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"];
+    const result: Record<string, boolean> = {};
+
+    for (const key of keys) {
+        const val = await getEnvVariable(key);
+        result[key] = !!val && val.length > 0 && val !== "null";
+    }
+    return result;
 }

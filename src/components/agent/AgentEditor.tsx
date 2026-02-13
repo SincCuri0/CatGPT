@@ -2,8 +2,10 @@
 
 import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
 import { useState } from "react";
-import { Save, X, ChevronDown, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Code, Shield } from "lucide-react";
+import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield } from "lucide-react";
 import { GROQ_TTS_VOICES, EDGE_TTS_VOICES, BROWSER_TTS_VOICES, loadAudioSettings, saveAudioSettings, TTSProvider } from "@/lib/audio/types";
+import { PROVIDERS } from "@/lib/llm/constants";
+import { useSettings } from "@/hooks/useSettings";
 
 interface AgentEditorProps {
     initialData?: AgentConfig;
@@ -16,14 +18,6 @@ const AGENT_STYLES: { value: AgentStyle; label: string; desc: string; icon: Reac
     { value: "character", label: "Character", desc: "Roleplay personality", icon: <User size={14} /> },
     { value: "expert", label: "Expert", desc: "Domain specialist", icon: <Shield size={14} /> },
     { value: "custom", label: "Custom", desc: "Fully freeform", icon: <Sparkles size={14} /> },
-];
-
-const GROQ_MODELS = [
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", desc: "Best quality" },
-    { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", desc: "Fast & light" },
-    { id: "llama-guard-3-8b", label: "Llama Guard 3", desc: "Safety-focused" },
-    { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B", desc: "32K context" },
-    { id: "gemma2-9b-it", label: "Gemma 2 9B", desc: "Google model" },
 ];
 
 // Pick voice list based on the provided TTS provider
@@ -52,6 +46,7 @@ const AVAILABLE_TOOLS = [
 ];
 
 export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps) {
+    const { apiKey, apiKeys } = useSettings();
     const [formData, setFormData] = useState<AgentConfig>(
         initialData || {
             name: "",
@@ -61,12 +56,15 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             systemPrompt: "",
             tools: [],
             voiceId: "troy",
+            provider: "groq",
             model: "llama-3.3-70b-versatile",
         }
     );
 
     const [activeSection, setActiveSection] = useState<"identity" | "prompt" | "model" | "tools">("identity");
     const [ttsProvider, setTtsProvider] = useState<TTSProvider>(() => loadAudioSettings().ttsProvider || "groq");
+    const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+    const [generatePromptError, setGeneratePromptError] = useState<string | null>(null);
 
     const handleProviderChange = (provider: TTSProvider) => {
         setTtsProvider(provider);
@@ -101,6 +99,53 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             {label}
         </button>
     );
+
+    // Helpers for LLM selection
+    const currentProvider = PROVIDERS.find(p => p.id === (formData.provider || "groq")) || PROVIDERS[0];
+    const availableModels = currentProvider.models;
+
+    const handleGenerateInstructions = async () => {
+        setIsGeneratingPrompt(true);
+        setGeneratePromptError(null);
+
+        try {
+            const response = await fetch("/api/agents/generate-instructions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-groq-api-key": apiKey || "",
+                    "x-api-keys": JSON.stringify(apiKeys),
+                },
+                body: JSON.stringify({
+                    provider: formData.provider || "groq",
+                    model: formData.model || currentProvider.defaultModel,
+                    name: formData.name || "",
+                    role: formData.role || "",
+                    style: formData.style || "assistant",
+                    description: formData.description || "",
+                    existingInstructions: formData.systemPrompt || "",
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || data.error) {
+                throw new Error(data.error || "Failed to generate instructions.");
+            }
+
+            const generatedText = typeof data.instructions === "string" ? data.instructions.trim() : "";
+            if (!generatedText) {
+                throw new Error("Model returned empty instructions.");
+            }
+
+            setFormData((prev) => ({ ...prev, systemPrompt: generatedText }));
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Failed to generate instructions.";
+            setGeneratePromptError(message);
+        } finally {
+            setIsGeneratingPrompt(false);
+        }
+    };
 
     return (
         <div className="bg-[#1f1f1f] text-[#ececec] h-full flex flex-col max-h-[85vh]">
@@ -206,12 +251,28 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                 {/* ===== INSTRUCTIONS SECTION ===== */}
                 {activeSection === "prompt" && (
                     <div className="space-y-1.5 h-full flex flex-col">
-                        <label className="text-xs font-medium text-[#b4b4b4]">
-                            System Prompt
-                        </label>
+                        <div className="flex items-center justify-between gap-3">
+                            <label className="text-xs font-medium text-[#b4b4b4]">
+                                System Prompt
+                            </label>
+                            <button
+                                type="button"
+                                onClick={handleGenerateInstructions}
+                                disabled={isGeneratingPrompt}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-[#424242] text-[11px] font-medium text-[#d4d4d8] hover:bg-[#2f2f2f] hover:border-[#676767] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <Sparkles size={12} />
+                                {isGeneratingPrompt ? "Generating..." : "Generate Instructions"}
+                            </button>
+                        </div>
                         <p className="text-[11px] text-[#676767] mb-1">
                             Define how this agent behaves, what it knows, and what it should avoid. The more detail you provide, the better it performs.
                         </p>
+                        {generatePromptError && (
+                            <p className="text-[11px] text-[#f87171] mb-1">
+                                {generatePromptError}
+                            </p>
+                        )}
                         <textarea
                             value={formData.systemPrompt}
                             onChange={(e) => setFormData({ ...formData, systemPrompt: e.target.value })}
@@ -227,15 +288,49 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                 {/* ===== MODEL & VOICE SECTION ===== */}
                 {activeSection === "model" && (
                     <>
+                        {/* Provider Selection */}
+                        <div className="space-y-2 mb-4">
+                            <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                <Cpu size={12} />
+                                AI Provider
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {PROVIDERS.map((p) => {
+                                    const isSelected = (formData.provider || "groq") === p.id;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            onClick={() => {
+                                                setFormData({
+                                                    ...formData,
+                                                    provider: p.id,
+                                                    model: p.defaultModel
+                                                });
+                                            }}
+                                            className={`px-3 py-2 rounded-lg border text-left transition-all ${isSelected
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                {p.name}
+                                            </div>
+                                            <div className="text-[10px] text-[#8e8ea0]">{p.description}</div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
                         {/* Model Selection */}
                         <div className="space-y-2">
                             <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
                                 <Cpu size={12} />
-                                AI Model
+                                AI Model ({currentProvider.name})
                             </label>
                             <div className="grid grid-cols-1 gap-2">
-                                {GROQ_MODELS.map((model) => {
-                                    const isSelected = (formData.model || "llama-3.3-70b-versatile") === model.id;
+                                {availableModels.map((model) => {
+                                    const isSelected = (formData.model || currentProvider.defaultModel) === model.id;
                                     return (
                                         <button
                                             key={model.id}
@@ -254,7 +349,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                                     {model.label}
                                                 </span>
                                             </div>
-                                            <span className="text-[11px] text-[#8e8ea0]">{model.desc}</span>
+                                            <span className="text-[11px] text-[#8e8ea0]">{model.description}</span>
                                         </button>
                                     );
                                 })}

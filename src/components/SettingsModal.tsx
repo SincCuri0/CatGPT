@@ -1,16 +1,26 @@
 "use client";
 
 import { useSettings } from "@/hooks/useSettings";
-import { useState } from "react";
-import { X, Shield, ShieldAlert, Key, Save, Cat } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Shield, ShieldAlert, Key, Save, Cat, ExternalLink, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { PROVIDERS } from "@/lib/llm/constants";
 
 export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-    const { apiKey, setApiKey, safeMode, setSafeMode } = useSettings();
-    const [tempKey, setTempKey] = useState(apiKey || "");
+    const { apiKeys, setProviderKey, serverConfiguredKeys, safeMode, setSafeMode } = useSettings();
+    const [tempKeys, setTempKeys] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        if (isOpen) {
+            setTempKeys(apiKeys);
+        }
+    }, [isOpen, apiKeys]);
 
     const handleSave = () => {
-        setApiKey(tempKey);
+        // Save all changed keys
+        Object.entries(tempKeys).forEach(([provider, key]) => {
+            setProviderKey(provider, key);
+        });
         onClose();
     };
 
@@ -27,12 +37,12 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                         initial={{ scale: 0.9, opacity: 0, rotate: -2 }}
                         animate={{ scale: 1, opacity: 1, rotate: 0 }}
                         exit={{ scale: 0.9, opacity: 0 }}
-                        className="bg-[#1a1b26] border border-[#ff9e64]/30 p-8 rounded-3xl shadow-2xl w-full max-w-md ring-4 ring-[#ff9e64]/5 relative overflow-hidden"
+                        className="bg-[#1a1b26] border border-[#ff9e64]/30 p-8 rounded-3xl shadow-2xl w-full max-w-lg ring-4 ring-[#ff9e64]/5 relative overflow-hidden max-h-[90vh] flex flex-col"
                     >
                         {/* Decor */}
                         <div className="absolute top-0 right-0 w-32 h-32 bg-[#ff9e64]/5 rounded-bl-full -mr-10 -mt-10" />
 
-                        <div className="flex justify-between items-center mb-8 relative z-10">
+                        <div className="flex justify-between items-center mb-6 relative z-10 flex-shrink-0">
                             <div>
                                 <h2 className="text-2xl font-bold flex items-center gap-3 text-white">
                                     <Cat className="text-[#ff9e64]" />
@@ -48,25 +58,54 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                             </button>
                         </div>
 
-                        <div className="space-y-8 relative z-10">
-                            {/* API Key Section */}
-                            <div className="space-y-3">
-                                <label className="block text-sm font-bold text-[#c0caf5]">
-                                    Cat Treats (API Key)
-                                </label>
-                                <div className="relative group">
-                                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#565f89] group-focus-within:text-[#ff9e64] transition-colors" />
-                                    <input
-                                        type="password"
-                                        value={tempKey}
-                                        onChange={(e) => setTempKey(e.target.value)}
-                                        placeholder="gsk_..."
-                                        className="w-full bg-[#16161e] border border-[#414868] rounded-xl pl-10 pr-4 py-3.5 text-white focus:outline-none focus:border-[#ff9e64] focus:ring-1 focus:ring-[#ff9e64] transition-all placeholder:text-[#565f89]"
-                                    />
-                                </div>
-                                <p className="text-xs text-[#565f89]">
-                                    Necessary for buying virtual tuna (inference).
-                                </p>
+                        <div className="space-y-6 relative z-10 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                            {/* API Keys Section */}
+                            <div className="space-y-4">
+                                <h3 className="text-sm font-bold text-[#c0caf5] uppercase tracking-wider">API Providers</h3>
+
+                                {PROVIDERS.map(provider => {
+                                    const isEnvConfigured = serverConfiguredKeys[provider.id + "_API_KEY".toUpperCase()] || serverConfiguredKeys[provider.id.toUpperCase() + "_API_KEY"];
+                                    // Actually the server returns specific key names, let's just check the map from getAllApiKeys
+                                    // getAllApiKeys returns { GROQ_API_KEY: true, ... }
+                                    // We need to map provider.id to env var name
+                                    const envVarName = `${provider.id.toUpperCase()}_API_KEY`;
+                                    const isServerSet = serverConfiguredKeys[envVarName];
+
+                                    return (
+                                        <div key={provider.id} className="space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-xs font-semibold text-[#a9b1d6] flex items-center gap-2">
+                                                    {provider.name}
+                                                    {isServerSet && (
+                                                        <span className="text-[10px] bg-[#9ece6a]/10 text-[#9ece6a] px-1.5 py-0.5 rounded flex items-center gap-1">
+                                                            <Check size={10} /> Env Configured
+                                                        </span>
+                                                    )}
+                                                </label>
+                                                {provider.apiKeyLink && (
+                                                    <a
+                                                        href={provider.apiKeyLink}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-[10px] text-[#ff9e64] hover:underline flex items-center gap-1"
+                                                    >
+                                                        Get Key <ExternalLink size={10} />
+                                                    </a>
+                                                )}
+                                            </div>
+                                            <div className="relative group">
+                                                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#565f89] group-focus-within:text-[#ff9e64] transition-colors" />
+                                                <input
+                                                    type="password"
+                                                    value={tempKeys[provider.id] || ""}
+                                                    onChange={(e) => setTempKeys({ ...tempKeys, [provider.id]: e.target.value })}
+                                                    placeholder={isServerSet ? "Managed by System (Optional override)" : `${provider.name} API Key`}
+                                                    className={`w-full bg-[#16161e] border ${isServerSet && !tempKeys[provider.id] ? "border-[#9ece6a]/30" : "border-[#414868]"} rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-[#ff9e64] focus:ring-1 focus:ring-[#ff9e64] transition-all placeholder:text-[#565f89] text-sm`}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
 
                             {/* Safe Mode Section */}
@@ -93,22 +132,22 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                         : "Dangerous. Cats have full shell access. Expect files to disappear."}
                                 </p>
                             </div>
+                        </div>
 
-                            <div className="pt-4 flex justify-end gap-3">
-                                <button
-                                    onClick={onClose}
-                                    className="px-6 py-3 text-sm font-bold text-[#787c99] hover:text-white hover:bg-[#24283b] rounded-xl transition-colors"
-                                >
-                                    Ignore
-                                </button>
-                                <button
-                                    onClick={handleSave}
-                                    className="flex items-center gap-2 px-6 py-3 text-sm font-bold bg-[#ff9e64] text-[#1a1b26] rounded-xl hover:bg-[#ffb86c] transition-all shadow-lg shadow-[#ff9e64]/20 hover:scale-105 active:scale-95"
-                                >
-                                    <Save className="w-4 h-4" />
-                                    Save Changes
-                                </button>
-                            </div>
+                        <div className="pt-6 flex justify-end gap-3 flex-shrink-0 mt-auto border-t border-[#414868]/50">
+                            <button
+                                onClick={onClose}
+                                className="px-6 py-3 text-sm font-bold text-[#787c99] hover:text-white hover:bg-[#24283b] rounded-xl transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                className="flex items-center gap-2 px-6 py-3 text-sm font-bold bg-[#ff9e64] text-[#1a1b26] rounded-xl hover:bg-[#ffb86c] transition-all shadow-lg shadow-[#ff9e64]/20 hover:scale-105 active:scale-95"
+                            >
+                                <Save className="w-4 h-4" />
+                                Save Changes
+                            </button>
                         </div>
                     </motion.div>
                 </motion.div>
