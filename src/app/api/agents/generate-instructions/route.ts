@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { providerRegistry } from "@/lib/llm/ProviderRegistry";
 import { getEnvVariable } from "@/lib/env";
+import { DEFAULT_REASONING_EFFORT } from "@/lib/llm/constants";
+import type { ReasoningEffort } from "@/lib/llm/types";
+import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
     groq: "GROQ_API_KEY",
@@ -47,6 +50,13 @@ function getErrorMessage(error: unknown): string {
     return "Unknown error";
 }
 
+function normalizeReasoningEffort(value: unknown): ReasoningEffort {
+    if (value === "none" || value === "low" || value === "medium" || value === "high") {
+        return value;
+    }
+    return DEFAULT_REASONING_EFFORT;
+}
+
 function buildGenerationPrompt(
     name: string,
     role: string,
@@ -77,7 +87,9 @@ function buildGenerationPrompt(
 }
 
 export async function POST(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/agents/generate-instructions", "POST request started");
         const apiKeys = await resolveApiKeys(req);
         const body = await req.json();
 
@@ -88,14 +100,22 @@ export async function POST(req: NextRequest) {
         const style = typeof body.style === "string" ? body.style.trim() : "";
         const description = typeof body.description === "string" ? body.description.trim() : "";
         const existingInstructions = typeof body.existingInstructions === "string" ? body.existingInstructions.trim() : "";
+        const reasoningEffort = normalizeReasoningEffort(body.reasoningEffort);
 
         const providerApiKey = apiKeys[provider];
         if (!providerApiKey) {
+            debugRouteLog(debugEnabled, "api/agents/generate-instructions", "Missing API key for provider", { provider });
             return NextResponse.json(
                 { error: `API key missing for provider '${provider}'.` },
                 { status: 401 },
             );
         }
+        debugRouteLog(debugEnabled, "api/agents/generate-instructions", "Generating prompt", {
+            provider,
+            model: model || "default",
+            reasoningEffort,
+            hasExistingInstructions: Boolean(existingInstructions),
+        });
 
         const llm = providerRegistry.createClient(provider, providerApiKey, model);
 
@@ -111,15 +131,21 @@ export async function POST(req: NextRequest) {
         ], {
             temperature: 0.4,
             max_tokens: 1800,
+            reasoningEffort,
         });
 
         const instructions = response.content?.trim();
         if (!instructions) {
+            debugRouteLog(debugEnabled, "api/agents/generate-instructions", "Model returned empty instructions");
             return NextResponse.json({ error: "Model returned empty instructions." }, { status: 502 });
         }
 
+        debugRouteLog(debugEnabled, "api/agents/generate-instructions", "Instructions generated", {
+            instructionLength: instructions.length,
+        });
         return NextResponse.json({ instructions });
     } catch (error: unknown) {
+        debugRouteError(debugEnabled, "api/agents/generate-instructions", "Unhandled error in POST", error);
         console.error("Generate Instructions API Error:", error);
         const message = getErrorMessage(error);
 

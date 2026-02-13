@@ -1,42 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs/promises";
-import { v4 as uuidv4 } from "uuid";
+import { createHash } from "crypto";
+import { ElevenLabsClient, ElevenLabsError } from "@elevenlabs/elevenlabs-js";
 import { generateEdgeTTS } from "@/lib/audio/edge-tts-handler";
+import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
 export async function POST(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/tts", "POST request started");
         const body = await req.json();
         const { text, voice, provider = "groq" } = body;
+        debugRouteLog(debugEnabled, "api/tts", "Parsed TTS payload", {
+            provider,
+            hasVoiceOverride: Boolean(voice),
+            textLength: typeof text === "string" ? text.trim().length : 0,
+        });
 
-        if (!text) {
+        if (typeof text !== "string" || !text.trim()) {
+            debugRouteLog(debugEnabled, "api/tts", "Rejected request: text missing");
             return NextResponse.json({ error: "Text is required" }, { status: 400 });
         }
 
         if (provider === "browser") {
+            debugRouteLog(debugEnabled, "api/tts", "Rejected request: browser provider should run client-side");
             return NextResponse.json({ error: "Browser provider should be handled on the client side" }, { status: 400 });
         }
 
         const publicAudioDir = path.join(process.cwd(), "public", "audio");
         await fs.mkdir(publicAudioDir, { recursive: true });
-
-        const fileId = uuidv4();
+        const normalizedText = text.trim();
 
         if (provider === "groq") {
-            return await handleGroqTTS(text, voice || "troy", fileId, publicAudioDir);
+            return await handleGroqTTS(normalizedText, voice || "troy", publicAudioDir, debugEnabled);
         }
         if (provider === "edge") {
-            return await handleNativeEdgeTTS(text, voice || "en-US-ChristopherNeural", fileId, publicAudioDir);
+            return await handleNativeEdgeTTS(normalizedText, voice || "en-US-ChristopherNeural", publicAudioDir, debugEnabled);
         }
         if (provider === "elevenlabs") {
-            return await handleElevenLabsTTS(req, text, voice, fileId, publicAudioDir);
+            return await handleElevenLabsTTS(req, normalizedText, voice, publicAudioDir, debugEnabled);
         }
         if (provider === "openai") {
+            debugRouteLog(debugEnabled, "api/tts", "OpenAI provider requested but not implemented");
             return NextResponse.json({ error: "OpenAI provider not yet implemented" }, { status: 501 });
         }
 
+        debugRouteLog(debugEnabled, "api/tts", "Unsupported provider requested", { provider });
         return NextResponse.json({ error: `Provider ${provider} not supported on server` }, { status: 400 });
     } catch (error: unknown) {
+        debugRouteError(debugEnabled, "api/tts", "Unhandled error in POST", error);
         console.error("TTS Generation Error:", error);
         return NextResponse.json(
             { error: "Failed to generate audio", details: error instanceof Error ? error.message : "Unknown error" },
@@ -45,14 +58,45 @@ export async function POST(req: NextRequest) {
     }
 }
 
-async function handleGroqTTS(text: string, voice: string, fileId: string, audioDir: string) {
+function buildAudioCacheId(provider: string, voice: string, text: string): string {
+    return createHash("sha256")
+        .update("tts-v1")
+        .update("\u0000")
+        .update(provider)
+        .update("\u0000")
+        .update(voice)
+        .update("\u0000")
+        .update(text)
+        .digest("hex")
+        .slice(0, 32);
+}
+
+async function hasUsableAudioFile(filePath: string): Promise<boolean> {
+    try {
+        const stats = await fs.stat(filePath);
+        return stats.isFile() && stats.size > 0;
+    } catch {
+        return false;
+    }
+}
+
+async function handleGroqTTS(text: string, voice: string, audioDir: string, debugEnabled: boolean) {
+    const GROQ_VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
+    const safeVoice = GROQ_VOICES.includes(voice) ? voice : "troy";
+    const fileId = buildAudioCacheId("groq", safeVoice, text);
+    const fileName = `${fileId}.wav`;
+    const outputPath = path.join(audioDir, fileName);
+
+    if (await hasUsableAudioFile(outputPath)) {
+        debugRouteLog(debugEnabled, "api/tts", "Groq cache hit", { fileName });
+        return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: true });
+    }
+    debugRouteLog(debugEnabled, "api/tts", "Groq cache miss", { voice: safeVoice, fileName });
+
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
         return NextResponse.json({ error: "GROQ_API_KEY not configured" }, { status: 401 });
     }
-
-    const GROQ_VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
-    const safeVoice = GROQ_VOICES.includes(voice) ? voice : "troy";
 
     const response = await fetch("https://api.groq.com/openai/v1/audio/speech", {
         method: "POST",
@@ -70,6 +114,7 @@ async function handleGroqTTS(text: string, voice: string, fileId: string, audioD
 
     if (!response.ok) {
         const errText = await response.text();
+        debugRouteLog(debugEnabled, "api/tts", "Groq TTS failed", { status: response.status });
         return NextResponse.json(
             { error: `Groq TTS failed: ${response.status}`, details: errText },
             { status: response.status }
@@ -77,22 +122,32 @@ async function handleGroqTTS(text: string, voice: string, fileId: string, audioD
     }
 
     const audioBuffer = Buffer.from(await response.arrayBuffer());
-    const fileName = `${fileId}.wav`;
-    const outputPath = path.join(audioDir, fileName);
     await fs.writeFile(outputPath, audioBuffer);
+    debugRouteLog(debugEnabled, "api/tts", "Groq audio generated", { bytes: audioBuffer.byteLength, fileName });
 
-    return NextResponse.json({ url: `/audio/${fileName}`, fileId });
+    return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: false });
 }
 
-async function handleNativeEdgeTTS(text: string, voice: string, fileId: string, audioDir: string) {
-    try {
-        const audioBuffer = await generateEdgeTTS(text, voice);
-        const fileName = `${fileId}.mp3`;
-        const outputPath = path.join(audioDir, fileName);
-        await fs.writeFile(outputPath, audioBuffer);
+async function handleNativeEdgeTTS(text: string, voice: string, audioDir: string, debugEnabled: boolean) {
+    const safeVoice = typeof voice === "string" && voice.trim() ? voice.trim() : "en-US-ChristopherNeural";
+    const fileId = buildAudioCacheId("edge", safeVoice, text);
+    const fileName = `${fileId}.mp3`;
+    const outputPath = path.join(audioDir, fileName);
 
-        return NextResponse.json({ url: `/audio/${fileName}`, fileId });
+    if (await hasUsableAudioFile(outputPath)) {
+        debugRouteLog(debugEnabled, "api/tts", "Edge cache hit", { fileName });
+        return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: true });
+    }
+    debugRouteLog(debugEnabled, "api/tts", "Edge cache miss", { voice: safeVoice, fileName });
+
+    try {
+        const audioBuffer = await generateEdgeTTS(text, safeVoice);
+        await fs.writeFile(outputPath, audioBuffer);
+        debugRouteLog(debugEnabled, "api/tts", "Edge audio generated", { bytes: audioBuffer.byteLength, fileName });
+
+        return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: false });
     } catch (error: unknown) {
+        debugRouteError(debugEnabled, "api/tts", "Edge TTS handler error", error, { voice: safeVoice });
         console.error("Edge TTS Handler Error:", error);
         return NextResponse.json({ error: "Edge TTS failed", details: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
     }
@@ -116,40 +171,62 @@ function resolveElevenLabsApiKey(req: NextRequest): string | null {
     return process.env.ELEVENLABS_API_KEY || null;
 }
 
-async function handleElevenLabsTTS(req: NextRequest, text: string, voice: string | undefined, fileId: string, audioDir: string) {
+async function handleElevenLabsTTS(
+    req: NextRequest,
+    text: string,
+    voice: string | undefined,
+    audioDir: string,
+    debugEnabled: boolean,
+) {
+    const voiceId = typeof voice === "string" && voice.trim() ? voice.trim() : "JBFqnCBsd6RMkjVDRZzb";
+    const fileId = buildAudioCacheId("elevenlabs", voiceId, text);
+    const fileName = `${fileId}.mp3`;
+    const outputPath = path.join(audioDir, fileName);
+
+    if (await hasUsableAudioFile(outputPath)) {
+        debugRouteLog(debugEnabled, "api/tts", "ElevenLabs cache hit", { fileName });
+        return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: true });
+    }
+    debugRouteLog(debugEnabled, "api/tts", "ElevenLabs cache miss", { voiceId, fileName });
+
     const apiKey = resolveElevenLabsApiKey(req);
     if (!apiKey) {
         return NextResponse.json({ error: "ELEVENLABS_API_KEY not configured" }, { status: 401 });
     }
 
-    const voiceId = typeof voice === "string" && voice.trim() ? voice.trim() : "JBFqnCBsd6RMkjVDRZzb";
-
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-        method: "POST",
-        headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
+    try {
+        const elevenlabs = new ElevenLabsClient({ apiKey });
+        const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
             text,
-            model_id: "eleven_turbo_v2_5",
-            output_format: "mp3_44100_128",
-        }),
-    });
+            modelId: "eleven_turbo_v2_5",
+            outputFormat: "mp3_44100_128",
+        });
+        const audioBuffer = Buffer.from(await new Response(audioStream).arrayBuffer());
+        await fs.writeFile(outputPath, audioBuffer);
+        debugRouteLog(debugEnabled, "api/tts", "ElevenLabs audio generated", { bytes: audioBuffer.byteLength, fileName });
 
-    if (!response.ok) {
-        const details = await response.text();
-        return NextResponse.json(
-            { error: `ElevenLabs TTS failed: ${response.status}`, details },
-            { status: response.status }
-        );
+        return NextResponse.json({ url: `/audio/${fileName}`, fileId, cached: false });
+    } catch (error: unknown) {
+        if (error instanceof ElevenLabsError) {
+            const status = error.statusCode || 500;
+            const details = formatErrorDetails(error.body);
+            debugRouteLog(debugEnabled, "api/tts", "ElevenLabs TTS failed", { status, details });
+            return NextResponse.json(
+                { error: `ElevenLabs TTS failed: ${status}`, details },
+                { status }
+            );
+        }
+        debugRouteError(debugEnabled, "api/tts", "Unexpected ElevenLabs error", error);
+        throw error;
     }
+}
 
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
-    const fileName = `${fileId}.mp3`;
-    const outputPath = path.join(audioDir, fileName);
-    await fs.writeFile(outputPath, audioBuffer);
-
-    return NextResponse.json({ url: `/audio/${fileName}`, fileId });
+function formatErrorDetails(details: unknown): string {
+    if (typeof details === "string") return details;
+    if (details == null) return "";
+    try {
+        return JSON.stringify(details);
+    } catch {
+        return String(details);
+    }
 }

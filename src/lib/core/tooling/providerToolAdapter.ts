@@ -24,12 +24,18 @@ export function buildProviderToolManifest(
     tools: Tool[],
 ): ProviderToolManifest {
     const nameToId = new Map<string, string>();
+    const usedNames = new Set<string>();
 
     const providerTools = tools.map((tool) => {
-        const providerName = sanitizeToolName(tool.name || tool.id);
-        if (!nameToId.has(providerName)) {
-            nameToId.set(providerName, tool.id);
+        const baseName = sanitizeToolName(tool.name || tool.id);
+        let providerName = baseName;
+        let suffix = 2;
+        while (usedNames.has(providerName)) {
+            providerName = `${baseName}_${suffix}`;
+            suffix += 1;
         }
+        usedNames.add(providerName);
+        nameToId.set(providerName, tool.id);
 
         return {
             id: tool.id,
@@ -46,7 +52,7 @@ export function buildProviderToolManifest(
                 return nameToId.get(providerToolName) ?? null;
             }
 
-            const byId = tools.find((tool) => tool.id === providerToolName);
+            const byId = tools.find((tool) => tool.id === providerToolName || tool.name === providerToolName);
             return byId ? byId.id : null;
         },
     };

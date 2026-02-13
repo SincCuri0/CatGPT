@@ -9,11 +9,15 @@ import {
     getSquadInteractionConfig,
     normalizeSquadConfig,
 } from "@/lib/core/Squad";
-import { Save, Users, X, LayoutGrid, MessageSquare, ListTree, Volume2, Keyboard } from "lucide-react";
+import { AgentEditor } from "@/components/agent/AgentEditor";
+import { Save, Users, X, LayoutGrid, MessageSquare, ListTree, Sparkles, Pencil, Trash2, Loader2 } from "lucide-react";
 
 interface SquadEditorProps {
     initialData?: SquadConfig;
     availableAgents: AgentConfig[];
+    onCreateSquadAgents: (prompt: string) => Promise<{ createdAgents: AgentConfig[]; message: string }>;
+    onUpsertSquadAgent: (agent: AgentConfig) => void;
+    onDeleteSquadAgent: (agentId: string) => void;
     onSave: (squad: SquadConfig) => void;
     onCancel: () => void;
 }
@@ -30,6 +34,9 @@ function createDefaultSquad(): SquadConfig {
 export function SquadEditor({
     initialData,
     availableAgents,
+    onCreateSquadAgents,
+    onUpsertSquadAgent,
+    onDeleteSquadAgent,
     onSave,
     onCancel,
 }: SquadEditorProps) {
@@ -37,6 +44,11 @@ export function SquadEditor({
     const [formData, setFormData] = useState<SquadConfig>(() => (
         initialData ? normalizeSquadConfig(initialData) : createDefaultSquad()
     ));
+    const [createPrompt, setCreatePrompt] = useState("");
+    const [createInfo, setCreateInfo] = useState<string | null>(null);
+    const [createError, setCreateError] = useState<string | null>(null);
+    const [isCreatingAgents, setIsCreatingAgents] = useState(false);
+    const [editingSquadAgent, setEditingSquadAgent] = useState<AgentConfig | undefined>(undefined);
 
     const interaction = getSquadInteractionConfig(formData);
     const goalValue = getSquadGoal(formData);
@@ -79,8 +91,52 @@ export function SquadEditor({
         ? "The squad pauses after each worker turn so the user can steer every step."
         : "The squad continues autonomously and only asks for user input when it is needed.";
 
+    const handleCreateAgents = async () => {
+        const prompt = createPrompt.trim();
+        if (!prompt || isCreatingAgents) return;
+
+        setIsCreatingAgents(true);
+        setCreateError(null);
+        setCreateInfo(null);
+
+        try {
+            const result = await onCreateSquadAgents(prompt);
+            setCreateInfo(result.message);
+
+            const createdIds = result.createdAgents
+                .map((agent) => agent.id)
+                .filter((id): id is string => Boolean(id));
+            if (createdIds.length > 0) {
+                setFormData((prev) => ({
+                    ...prev,
+                    members: Array.from(new Set([...(prev.members || []), ...createdIds])),
+                }));
+            }
+            setCreatePrompt("");
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Failed to create squad cats.";
+            setCreateError(message);
+        } finally {
+            setIsCreatingAgents(false);
+        }
+    };
+
+    const handleDeleteAgent = (agent: AgentConfig) => {
+        const agentId = agent.id || "";
+        if (!agentId) return;
+
+        const confirmed = window.confirm(`Remove "${agent.name}" from squad agents?`);
+        if (!confirmed) return;
+
+        onDeleteSquadAgent(agentId);
+        setFormData((prev) => ({
+            ...prev,
+            members: (prev.members || []).filter((memberId) => memberId !== agentId),
+        }));
+    };
+
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col w-full max-w-3xl mx-auto h-[85vh] max-h-[85vh]">
+        <div className="relative bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col w-full max-w-3xl mx-auto h-[85vh] max-h-[85vh]">
             <div className="bg-slate-800/80 p-4 flex justify-between items-center border-b border-slate-700">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                     <LayoutGrid className="text-purple-500" />
@@ -185,11 +241,60 @@ export function SquadEditor({
 
                 {activeTab === "team" && (
                     <div className="space-y-3">
+                        <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 space-y-2.5">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-sm font-semibold text-slate-200 inline-flex items-center gap-2">
+                                        <Sparkles size={14} className="text-blue-300" />
+                                        Create Squad Cats
+                                    </div>
+                                    <div className="text-xs text-slate-500 mt-0.5">
+                                        Same natural-language flow as <code>/create_cats</code>, but scoped to squad-only agents.
+                                    </div>
+                                </div>
+                            </div>
+                            <textarea
+                                value={createPrompt}
+                                onChange={(e) => setCreatePrompt(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all h-20 resize-none placeholder:text-slate-600"
+                                placeholder="Describe what cats this squad needs (roles, responsibilities, style)."
+                            />
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-[11px] text-slate-500">
+                                    New squad cats are auto-selected as team members.
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleCreateAgents}
+                                    disabled={isCreatingAgents || createPrompt.trim().length === 0}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    {isCreatingAgents && <Loader2 size={12} className="animate-spin" />}
+                                    {isCreatingAgents ? "Creating..." : "Create Squad Cats"}
+                                </button>
+                            </div>
+                            {createInfo && (
+                                <div className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2.5 py-2">
+                                    {createInfo}
+                                </div>
+                            )}
+                            {createError && (
+                                <div className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-md px-2.5 py-2">
+                                    {createError}
+                                </div>
+                            )}
+                        </div>
+
                         <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
                             <Users size={16} className="text-blue-400" />
                             Team Members ({formData.members.length} selected)
                         </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[52vh] overflow-y-auto pr-1 custom-scrollbar">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[44vh] overflow-y-auto pr-1 custom-scrollbar">
+                            {availableAgents.length === 0 && (
+                                <div className="sm:col-span-2 rounded-lg border border-dashed border-slate-700 bg-slate-950 px-3 py-4 text-center text-xs text-slate-500">
+                                    No squad-only cats yet. Create them above to build this team.
+                                </div>
+                            )}
                             {availableAgents.map((agent) => {
                                 const id = agent.id || "";
                                 const isSelected = formData.members.includes(id);
@@ -212,6 +317,30 @@ export function SquadEditor({
                                         <div className="min-w-0">
                                             <div className={`text-sm font-medium truncate ${isSelected ? "text-purple-100" : "text-slate-300"}`}>{agent.name}</div>
                                             <div className="text-[10px] text-slate-500 truncate">{agent.role}</div>
+                                        </div>
+                                        <div className="ml-auto flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setEditingSquadAgent(agent);
+                                                }}
+                                                className="p-1 rounded text-slate-500 hover:text-blue-200 hover:bg-blue-500/10 transition-colors"
+                                                title="Edit Squad Cat"
+                                            >
+                                                <Pencil size={12} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteAgent(agent);
+                                                }}
+                                                className="p-1 rounded text-slate-500 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                                                title="Remove Squad Cat"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
                                         </div>
                                     </div>
                                 );
@@ -338,37 +467,6 @@ export function SquadEditor({
                                 </div>
                             </div>
 
-                            <label className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 flex items-start gap-3 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={interaction.typewriterCharacterMessages}
-                                    onChange={(e) => updateInteraction({ typewriterCharacterMessages: e.target.checked })}
-                                    className="mt-0.5 accent-purple-500"
-                                />
-                                <span>
-                                    <span className="text-xs font-semibold text-slate-200 inline-flex items-center gap-1.5">
-                                        <Keyboard size={12} />
-                                        Character typewriter effect
-                                    </span>
-                                    <span className="block text-[11px] text-slate-500">Animate character text as it appears in chat.</span>
-                                </span>
-                            </label>
-
-                            <label className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 flex items-start gap-3 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={interaction.autoPlayCharacterVoices}
-                                    onChange={(e) => updateInteraction({ autoPlayCharacterVoices: e.target.checked })}
-                                    className="mt-0.5 accent-purple-500"
-                                />
-                                <span>
-                                    <span className="text-xs font-semibold text-slate-200 inline-flex items-center gap-1.5">
-                                        <Volume2 size={12} />
-                                        Auto-play character voices
-                                    </span>
-                                    <span className="block text-[11px] text-slate-500">Use each character voice automatically when their line appears.</span>
-                                </span>
-                            </label>
                         </div>
                     </div>
                 )}
@@ -394,6 +492,21 @@ export function SquadEditor({
                     </button>
                 </div>
             </div>
+
+            {editingSquadAgent && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-20 flex items-center justify-center p-4">
+                    <div className="w-full max-w-2xl bg-[#1f1f1f] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+                        <AgentEditor
+                            initialData={editingSquadAgent}
+                            onSave={(agent) => {
+                                onUpsertSquadAgent(agent);
+                                setEditingSquadAgent(undefined);
+                            }}
+                            onCancel={() => setEditingSquadAgent(undefined)}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

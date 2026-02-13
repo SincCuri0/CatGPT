@@ -16,7 +16,6 @@ export async function generateEdgeTTS(
 
         const ws = new WebSocket(url);
         const audioData: Buffer[] = [];
-        let isStarted = false;
 
         ws.onopen = () => {
             // 1. Send Config

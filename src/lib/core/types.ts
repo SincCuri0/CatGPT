@@ -8,6 +8,15 @@ export interface Message {
     voiceId?: string;
     autoPlay?: boolean;
     typewriter?: boolean;
+    error?: boolean;
+    toolExecution?: {
+        attempted: number;
+        succeeded: number;
+        failed: number;
+        malformed: number;
+        verifiedFileEffects: number;
+        verifiedShellEffects: number;
+    };
     timestamp: number;
 }
 
@@ -40,6 +49,32 @@ export interface ToolExecutionContext {
     agentName?: string;
     providerId?: string;
     squadId?: string;
+    squadName?: string;
+}
+
+export type ToolArtifactKind = "file" | "shell" | "web" | "other";
+
+export interface ToolArtifact {
+    kind: ToolArtifactKind;
+    label: string;
+    operation?: string;
+    path?: string;
+    metadata?: Record<string, unknown>;
+}
+
+export interface ToolCheck {
+    id: string;
+    ok: boolean;
+    description: string;
+    details?: string;
+}
+
+export interface ToolResult {
+    ok: boolean;
+    output?: string;
+    error?: string;
+    artifacts: ToolArtifact[];
+    checks: ToolCheck[];
 }
 
 export interface Tool {
@@ -49,5 +84,5 @@ export interface Tool {
     inputSchema?: ToolInputSchema;
     // Backward compatibility for existing tool definitions.
     parameters?: ToolInputSchema;
-    execute: (args: unknown, context?: ToolExecutionContext) => Promise<string>;
+    execute: (args: unknown, context?: ToolExecutionContext) => Promise<ToolResult>;
 }

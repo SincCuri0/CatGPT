@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { providerRegistry } from "@/lib/llm/ProviderRegistry";
 import { getEnvVariable } from "@/lib/env";
 import type { AgentStyle } from "@/lib/core/Agent";
-import { PROVIDERS } from "@/lib/llm/constants";
+import { DEFAULT_REASONING_EFFORT, PROVIDERS } from "@/lib/llm/constants";
+import type { ReasoningEffort } from "@/lib/llm/types";
+import { isModelChatCapable, supportsReasoningEffort } from "@/lib/llm/modelCatalog";
+import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
     groq: "GROQ_API_KEY",
@@ -28,6 +31,7 @@ interface GeneratedAgentDraft {
     tools: string[];
     provider: string;
     model: string;
+    reasoningEffort: ReasoningEffort;
     voiceId: string;
 }
 
@@ -49,6 +53,7 @@ interface NormalizeContext {
     userPrompt: string;
     defaultProvider: string;
     defaultModel: string;
+    defaultReasoningEffort: ReasoningEffort;
     existingNames: Set<string>;
 }
 
@@ -56,6 +61,7 @@ interface CreateCatsRequestBody {
     prompt?: unknown;
     provider?: unknown;
     model?: unknown;
+    reasoningEffort?: unknown;
     existingAgents?: unknown;
 }
 
@@ -108,6 +114,13 @@ function defaultModelForProvider(providerId: string): string {
 
 function sanitizeText(value: unknown): string {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeReasoningEffort(value: unknown): ReasoningEffort {
+    if (value === "none" || value === "low" || value === "medium" || value === "high") {
+        return value;
+    }
+    return DEFAULT_REASONING_EFFORT;
 }
 
 function sanitizeStyle(value: unknown): AgentStyle {
@@ -242,6 +255,7 @@ function buildFallbackAgent(context: NormalizeContext): GeneratedAgentDraft | nu
         tools: [],
         provider: context.defaultProvider,
         model: context.defaultModel,
+        reasoningEffort: context.defaultReasoningEffort,
         voiceId: "en-US-ChristopherNeural",
     };
 }
@@ -263,9 +277,18 @@ function normalizeAgentDraft(
     const provider = isProviderSupported(providerCandidate) ? providerCandidate : context.defaultProvider;
 
     const modelCandidate = sanitizeText(record.model);
-    const model = modelCandidate || (provider === context.defaultProvider
+    const initialModel = modelCandidate || (provider === context.defaultProvider
         ? context.defaultModel
         : defaultModelForProvider(provider));
+    const model = isModelChatCapable({ id: initialModel }, provider)
+        ? initialModel
+        : defaultModelForProvider(provider);
+    const reasoningEffort = typeof record.reasoningEffort === "string"
+        ? normalizeReasoningEffort(record.reasoningEffort)
+        : context.defaultReasoningEffort;
+    const safeReasoningEffort = supportsReasoningEffort(provider, model)
+        ? reasoningEffort
+        : "none";
 
     const voiceId = sanitizeText(record.voiceId) || "en-US-ChristopherNeural";
     const tools = sanitizeTools(record.tools);
@@ -284,6 +307,7 @@ function normalizeAgentDraft(
         tools,
         provider,
         model,
+        reasoningEffort: safeReasoningEffort,
         voiceId,
     };
 }
@@ -357,6 +381,7 @@ function buildPlannerPrompt(
     existingAgents: ExistingAgentSummary[],
     defaultProvider: string,
     defaultModel: string,
+    defaultReasoningEffort: ReasoningEffort,
 ): string {
     const existingList = existingAgents.length > 0
         ? existingAgents.map((agent) => `- ${agent.name} (${agent.role || "unspecified role"})`).join("\n")
@@ -378,6 +403,7 @@ function buildPlannerPrompt(
         '      "tools": ["web_search"|"fs_read"|"fs_write"|"shell_execute"],',
         '      "provider": "groq|openai|anthropic|google",',
         '      "model": "string",',
+        '      "reasoningEffort": "none|low|medium|high",',
         '      "voiceId": "string"',
         "    }",
         "  ],",
@@ -394,6 +420,7 @@ function buildPlannerPrompt(
         "",
         `Default provider if not specified: ${defaultProvider}`,
         `Default model if not specified: ${defaultModel}`,
+        `Default reasoningEffort if not specified: ${defaultReasoningEffort}`,
         "Existing agents:",
         existingList,
         "",
@@ -403,7 +430,9 @@ function buildPlannerPrompt(
 }
 
 export async function POST(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/agents/create-cats", "POST request started");
         const apiKeys = await resolveApiKeys(req);
         const body = (await req.json()) as CreateCatsRequestBody;
 
@@ -411,14 +440,21 @@ export async function POST(req: NextRequest) {
         const preferredProviderRaw = sanitizeText(body.provider).toLowerCase();
         const preferredProvider = isProviderSupported(preferredProviderRaw) ? preferredProviderRaw : "groq";
         const preferredModel = sanitizeText(body.model);
+        const preferredReasoningEffort = normalizeReasoningEffort(body.reasoningEffort);
         const existingAgents = toExistingAgents(body.existingAgents);
 
         if (!userPrompt) {
+            debugRouteLog(debugEnabled, "api/agents/create-cats", "Request missing prompt; asking for more information");
             return NextResponse.json({
                 action: "request_information",
                 question: "Tell me what kind of cat agent(s) you want to create and what they should do.",
             } satisfies RequestInformationResult);
         }
+        debugRouteLog(debugEnabled, "api/agents/create-cats", "Parsed create-cats request", {
+            preferredProvider,
+            hasPreferredModel: Boolean(preferredModel),
+            existingAgents: existingAgents.length,
+        });
 
         const providerSearchOrder = [
             preferredProvider,
@@ -437,14 +473,18 @@ export async function POST(req: NextRequest) {
         }
 
         if (!activeProvider || !activeApiKey) {
+            debugRouteLog(debugEnabled, "api/agents/create-cats", "No provider API key available");
             return NextResponse.json(
                 { error: "No provider API key found for create-cats." },
                 { status: 401 },
             );
         }
 
-        const activeModel = activeProvider === preferredProvider && preferredModel
+        const activeModelCandidate = activeProvider === preferredProvider && preferredModel
             ? preferredModel
+            : defaultModelForProvider(activeProvider);
+        const activeModel = isModelChatCapable({ id: activeModelCandidate }, activeProvider)
+            ? activeModelCandidate
             : defaultModelForProvider(activeProvider);
 
         const llm = providerRegistry.createClient(activeProvider, activeApiKey, activeModel);
@@ -455,22 +495,29 @@ export async function POST(req: NextRequest) {
             },
             {
                 role: "user",
-                content: buildPlannerPrompt(userPrompt, existingAgents, activeProvider, activeModel),
+                content: buildPlannerPrompt(userPrompt, existingAgents, activeProvider, activeModel, preferredReasoningEffort),
             },
         ], {
             temperature: 0.25,
             max_tokens: 2200,
+            reasoningEffort: preferredReasoningEffort,
         });
 
         const normalized = normalizeModelResult(llmResponse.content || "", {
             userPrompt,
             defaultProvider: activeProvider,
             defaultModel: activeModel,
+            defaultReasoningEffort: preferredReasoningEffort,
             existingNames: new Set(existingAgents.map((agent) => agent.name.toLowerCase())),
+        });
+        debugRouteLog(debugEnabled, "api/agents/create-cats", "Create-cats response prepared", {
+            action: normalized.action,
+            generatedAgents: normalized.action === "create_agents" ? normalized.agents.length : 0,
         });
 
         return NextResponse.json(normalized satisfies CreateCatsResult);
     } catch (error: unknown) {
+        debugRouteError(debugEnabled, "api/agents/create-cats", "Unhandled error in POST", error);
         console.error("Create Cats API Error:", error);
         const message = getErrorMessage(error);
 

@@ -6,6 +6,7 @@
         "systemPrompt": "You are a helpful assistan, meow.",
         "voiceId": "en-US-AnaNeural",
         "model": "llama-3.3-70b-versatile",
+        "reasoningEffort": "medium",
         "tools": [
             "web_search"
         ]

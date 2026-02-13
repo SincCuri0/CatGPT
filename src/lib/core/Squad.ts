@@ -1,4 +1,5 @@
 import { AgentConfig, AgentStyle } from "./Agent";
+import { isKnownDeprecatedModel } from "../llm/modelCatalog";
 
 export type SquadInteractionMode = "master_log" | "live_campaign";
 export type SquadUserTurnPolicy = "on_demand" | "every_round";
@@ -8,8 +9,6 @@ export interface SquadInteractionConfig {
     showMasterLog: boolean;
     showAgentMessagesInChat: boolean;
     includeDirectorMessagesInChat: boolean;
-    autoPlayCharacterVoices: boolean;
-    typewriterCharacterMessages: boolean;
     userTurnPolicy: SquadUserTurnPolicy;
 }
 
@@ -26,8 +25,6 @@ const MASTER_LOG_INTERACTION_DEFAULTS: SquadInteractionConfig = {
     showMasterLog: true,
     showAgentMessagesInChat: false,
     includeDirectorMessagesInChat: false,
-    autoPlayCharacterVoices: false,
-    typewriterCharacterMessages: false,
     userTurnPolicy: "on_demand",
 };
 
@@ -36,8 +33,6 @@ const LIVE_CAMPAIGN_INTERACTION_DEFAULTS: SquadInteractionConfig = {
     showMasterLog: false,
     showAgentMessagesInChat: true,
     includeDirectorMessagesInChat: true,
-    autoPlayCharacterVoices: true,
-    typewriterCharacterMessages: true,
     userTurnPolicy: "every_round",
 };
 
@@ -70,6 +65,14 @@ export interface SquadRunStep {
     workerAgentName?: string;
     workerInstruction?: string;
     workerOutput?: string;
+    workerToolExecution?: {
+        attempted: number;
+        succeeded: number;
+        failed: number;
+        malformed: number;
+        verifiedFileEffects: number;
+        verifiedShellEffects: number;
+    };
 }
 
 export interface SquadRunResult {
@@ -157,8 +160,6 @@ export function getSquadInteractionConfig(config?: SquadConfig | null): SquadInt
         showMasterLog: normalizeBoolean(source.showMasterLog, modeDefaults.showMasterLog),
         showAgentMessagesInChat: normalizeBoolean(source.showAgentMessagesInChat, modeDefaults.showAgentMessagesInChat),
         includeDirectorMessagesInChat: normalizeBoolean(source.includeDirectorMessagesInChat, modeDefaults.includeDirectorMessagesInChat),
-        autoPlayCharacterVoices: normalizeBoolean(source.autoPlayCharacterVoices, modeDefaults.autoPlayCharacterVoices),
-        typewriterCharacterMessages: normalizeBoolean(source.typewriterCharacterMessages, modeDefaults.typewriterCharacterMessages),
         userTurnPolicy: normalizeTurnPolicy(source.userTurnPolicy) || modeDefaults.userTurnPolicy,
     };
 }
@@ -176,6 +177,12 @@ export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
         ? Math.max(1, Math.floor(config.maxIterations))
         : undefined;
     const orchestrator = config.orchestrator ?? {};
+    const orchestratorProvider = sanitizeText(orchestrator.provider) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider;
+    const requestedOrchestratorModel = sanitizeText(orchestrator.model);
+    const orchestratorModel = requestedOrchestratorModel
+        && !isKnownDeprecatedModel(orchestratorProvider, requestedOrchestratorModel)
+        ? requestedOrchestratorModel
+        : DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.model;
 
     return {
         ...config,
@@ -186,8 +193,8 @@ export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
         maxIterations: safeMaxIterations,
         orchestrator: {
             name: sanitizeText(orchestrator.name) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.name,
-            provider: sanitizeText(orchestrator.provider) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider,
-            model: sanitizeText(orchestrator.model) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.model,
+            provider: orchestratorProvider,
+            model: orchestratorModel,
             style: normalizeStyle(orchestrator.style) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.style,
             voiceId: sanitizeText(orchestrator.voiceId) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.voiceId,
         },

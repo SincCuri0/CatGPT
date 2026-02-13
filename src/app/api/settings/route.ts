@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEnvVariable, setEnvVariable, getAllApiKeys } from "@/lib/env";
+import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/settings", "GET request started");
         const keysConfigured = await getAllApiKeys();
+        debugRouteLog(debugEnabled, "api/settings", "Resolved key configuration state", keysConfigured);
         // Return which keys are configured on the server
         return NextResponse.json({
             keysConfigured,
@@ -22,13 +26,20 @@ export async function GET() {
             }
         });
     } catch (e: unknown) {
+        debugRouteError(debugEnabled, "api/settings", "Unhandled error in GET", e);
         return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
     }
 }
 
 export async function POST(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/settings", "POST request started");
         const body = await req.json();
+        debugRouteLog(debugEnabled, "api/settings", "Received settings payload", {
+            hasLegacyApiKey: Boolean(body.apiKey),
+            providers: body.apiKeys ? Object.keys(body.apiKeys) : [],
+        });
 
         // Handle legacy single key update
         if (body.apiKey) {
@@ -53,8 +64,10 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        debugRouteLog(debugEnabled, "api/settings", "Settings update completed");
         return NextResponse.json({ success: true });
     } catch (e: unknown) {
+        debugRouteError(debugEnabled, "api/settings", "Unhandled error in POST", e);
         return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
     }
 }

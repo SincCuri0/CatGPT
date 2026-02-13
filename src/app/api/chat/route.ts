@@ -5,6 +5,7 @@ import { toolRegistry } from "@/lib/core/ToolRegistry";
 import { getEnvVariable } from "@/lib/env";
 import { SquadConfig } from "@/lib/core/Squad";
 import { SquadOrchestrator } from "@/lib/core/SquadOrchestrator";
+import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
 // Import tools to ensure they are registered
 import { FileSystemReadTool, FileSystemWriteTool, FileSystemListTool } from "@/lib/tools/computer/file_system";
@@ -22,7 +23,7 @@ const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
     groq: "GROQ_API_KEY",
     openai: "OPENAI_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",
-    google: "GOOGLE_API_KEY",
+    google: "GEMINI_API_KEY",
 };
 
 async function resolveApiKeys(req: NextRequest): Promise<Record<string, string | null>> {
@@ -65,8 +66,11 @@ function getErrorMessage(error: unknown): string {
 }
 
 export async function POST(req: NextRequest) {
+    const debugEnabled = isDebugRequest(req);
     try {
+        debugRouteLog(debugEnabled, "api/chat", "POST request started");
         const apiKeys = await resolveApiKeys(req);
+        const wantsSquadStream = req.headers.get("x-squad-stream") === "1";
         const body = await req.json();
 
         const {
@@ -84,8 +88,14 @@ export async function POST(req: NextRequest) {
         } = body;
 
         if (!message) {
+            debugRouteLog(debugEnabled, "api/chat", "Rejected request: missing message");
             return NextResponse.json({ error: "Invalid Request: missing message" }, { status: 400 });
         }
+        debugRouteLog(debugEnabled, "api/chat", "Parsed request payload", {
+            hasSquadConfig: Boolean(squadConfig),
+            historyCount: Array.isArray(history) ? history.length : 0,
+            messageLength: message.length,
+        });
 
         const tools = toolRegistry.getAll();
         const normalizedHistory = Array.isArray(history) ? history : [];
@@ -96,10 +106,66 @@ export async function POST(req: NextRequest) {
 
         if (squadConfig) {
             if (!Array.isArray(agents) || agents.length === 0) {
+                debugRouteLog(debugEnabled, "api/chat", "Rejected squad request: agents[] missing");
                 return NextResponse.json({ error: "Invalid Request: squad mode requires agents[]" }, { status: 400 });
             }
+            debugRouteLog(debugEnabled, "api/chat", "Running squad orchestrator", { agentCount: agents.length });
             const orchestrator = new SquadOrchestrator(agents, tools, apiKeys as AgentApiKeys);
+
+            if (wantsSquadStream) {
+                const encoder = new TextEncoder();
+                const stream = new ReadableStream<Uint8Array>({
+                    start: async (controller) => {
+                        const send = (payload: Record<string, unknown>) => {
+                            controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+                        };
+
+                        try {
+                            const result = await orchestrator.run(
+                                squadConfig,
+                                fullHistory,
+                                message,
+                                async (step) => {
+                                    send({ type: "squad_step", step });
+                                },
+                            );
+                            debugRouteLog(debugEnabled, "api/chat", "Squad stream completed", {
+                                stepCount: Array.isArray(result.steps) ? result.steps.length : 0,
+                                status: result.status,
+                                response: result.response,
+                            });
+                            send({
+                                type: "squad_complete",
+                                response: result.response,
+                                squadStatus: result.status,
+                                squadSteps: result.steps,
+                            });
+                        } catch (error: unknown) {
+                            debugRouteError(debugEnabled, "api/chat", "Squad stream failed", error);
+                            send({
+                                type: "error",
+                                error: getErrorMessage(error),
+                            });
+                        } finally {
+                            controller.close();
+                        }
+                    },
+                });
+
+                return new Response(stream, {
+                    headers: {
+                        "Content-Type": "application/x-ndjson; charset=utf-8",
+                        "Cache-Control": "no-cache, no-transform",
+                    },
+                });
+            }
+
             const result = await orchestrator.run(squadConfig, fullHistory, message);
+            debugRouteLog(debugEnabled, "api/chat", "Squad response completed", {
+                stepCount: Array.isArray(result.steps) ? result.steps.length : 0,
+                status: result.status,
+                response: result.response,
+            });
             return NextResponse.json({
                 response: result.response,
                 squadStatus: result.status,
@@ -108,14 +174,20 @@ export async function POST(req: NextRequest) {
         }
 
         if (!agentConfig) {
+            debugRouteLog(debugEnabled, "api/chat", "Rejected request: missing agentConfig or squadConfig");
             return NextResponse.json({ error: "Invalid Request: missing agentConfig or squadConfig" }, { status: 400 });
         }
 
         const agent = new Agent(agentConfig);
         const responseMsg = await agent.process(fullHistory, apiKeys, tools);
+        debugRouteLog(debugEnabled, "api/chat", "Single-agent response completed", {
+            agentName: agentConfig.name || "unknown",
+            responseLength: responseMsg.content.length,
+        });
 
         return NextResponse.json({ response: responseMsg.content });
     } catch (error: unknown) {
+        debugRouteError(debugEnabled, "api/chat", "Unhandled error in POST", error);
         console.error("Chat API Error:", error);
         const message = getErrorMessage(error);
 

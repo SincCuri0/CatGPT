@@ -54,6 +54,117 @@ function toStringArray(values: string[]): string {
     return values.length > 0 ? values.join("\n") : "None yet.";
 }
 
+function inferToolCapabilities(toolIds: string[]): string[] {
+    const capabilities = new Set<string>();
+
+    for (const toolId of toolIds) {
+        if (toolId === "fs_read" || toolId === "fs_write" || toolId === "fs_list") {
+            capabilities.add("file-io");
+        }
+        if (toolId === "shell_execute") {
+            capabilities.add("shell");
+        }
+        if (toolId === "web_search") {
+            capabilities.add("web-research");
+        }
+    }
+
+    return Array.from(capabilities);
+}
+
+interface WorkerExecutionExpectation {
+    requiresToolExecution: boolean;
+    requiresFileEffects: boolean;
+    requiresShellEffects: boolean;
+}
+
+interface WorkerExecutionVerification {
+    ok: boolean;
+    reason: string;
+}
+
+function inferWorkerExecutionExpectation(instruction: string, worker: AgentConfig): WorkerExecutionExpectation {
+    const toolIds = worker.tools || [];
+    if (toolIds.length === 0) {
+        return {
+            requiresToolExecution: false,
+            requiresFileEffects: false,
+            requiresShellEffects: false,
+        };
+    }
+
+    const normalized = instruction.toLowerCase();
+    const hasFileTool = toolIds.includes("fs_read") || toolIds.includes("fs_write") || toolIds.includes("fs_list")
+        || toolIds.includes("read_file") || toolIds.includes("write_file") || toolIds.includes("list_directory");
+    const hasShellTool = toolIds.includes("shell_execute") || toolIds.includes("execute_command");
+    const hasWebTool = toolIds.includes("web_search") || toolIds.includes("search_internet");
+
+    const hasExplicitFileReference = /(?:^|\s)(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?[A-Za-z0-9._/-]+\.[A-Za-z0-9]{1,10}(?=\s|$)/.test(normalized);
+    const codingIntent = /(implement|build|create|develop|code|program|refactor|fix|add|update|modify)/.test(normalized);
+    const codeArtifactIntent = /(file|script|module|class|function|code|component|app|game|endpoint|api)/.test(normalized);
+    const fileWriteIntent = /(write|save|append|create file|update file|modify file|edit file|persist|output file|artifact)/.test(normalized);
+    const fileReadIntent = /(read|load|open file|list directory|directory|path|inspect file)/.test(normalized);
+    const shellIntent = /(run|execute|test|build|install|lint|compile|command|terminal)/.test(normalized);
+    const webIntent = /(research|search|look up|find online|web|internet|source)/.test(normalized);
+
+    const requiresFileEffects = hasFileTool && (
+        fileWriteIntent
+        || (codingIntent && (codeArtifactIntent || hasExplicitFileReference))
+    );
+    const requiresShellEffects = shellIntent && hasShellTool;
+    const requiresToolExecution = requiresFileEffects
+        || requiresShellEffects
+        || ((fileReadIntent && hasFileTool) || (webIntent && hasWebTool));
+
+    return {
+        requiresToolExecution,
+        requiresFileEffects,
+        requiresShellEffects,
+    };
+}
+
+function verifyWorkerExecution(
+    expectation: WorkerExecutionExpectation,
+    attempted: number,
+    succeeded: number,
+    verifiedFileEffects: number,
+    verifiedShellEffects: number,
+): WorkerExecutionVerification {
+    if (!expectation.requiresToolExecution) {
+        return { ok: true, reason: "No tool execution required for this instruction." };
+    }
+
+    if (attempted <= 0) {
+        return {
+            ok: false,
+            reason: "No tools were executed for a tool-dependent instruction.",
+        };
+    }
+
+    if (succeeded <= 0) {
+        return {
+            ok: false,
+            reason: "Tools were attempted but none succeeded.",
+        };
+    }
+
+    if (expectation.requiresFileEffects && verifiedFileEffects <= 0) {
+        return {
+            ok: false,
+            reason: "Instruction required file side effects, but no verified file write/append effects were produced.",
+        };
+    }
+
+    if (expectation.requiresShellEffects && verifiedShellEffects <= 0) {
+        return {
+            ok: false,
+            reason: "Instruction required shell execution side effects, but no verified shell execution effects were produced.",
+        };
+    }
+
+    return { ok: true, reason: "Tool execution requirements satisfied." };
+}
+
 function normalizeDecision(input: Record<string, unknown>): DirectorDecision | null {
     const status = String(input.status ?? "").trim().toLowerCase();
     const summary = String(input.summary ?? "").trim();
@@ -154,11 +265,13 @@ export class SquadOrchestrator {
         const interaction = getSquadInteractionConfig(runtime.config);
         const goal = getSquadGoal(runtime.config);
         const context = getSquadContext(runtime.config);
-        const workspaceFolder = `squads/${sanitizeSquadFolderName(runtime.config.name)}`;
+        const workspaceFolder = `Squads/${sanitizeSquadFolderName(runtime.config.name)}`;
         const workers = runtime.workers.map((agent) => {
             const tools = agent.tools && agent.tools.length > 0 ? agent.tools.join(", ") : "No tools";
+            const capabilities = inferToolCapabilities(agent.tools || []);
             const style = agent.style || "assistant";
-            return `- ${agent.id}: ${agent.name} (${agent.role}, style=${style}) | Tools: ${tools}`;
+            const capabilitySummary = capabilities.length > 0 ? capabilities.join(", ") : "none";
+            return `- ${agent.id}: ${agent.name} (${agent.role}, style=${style}) | Tools: ${tools} | Capabilities: ${capabilitySummary}`;
         }).join("\n");
 
         const interactionInstructions = interaction.mode === "live_campaign"
@@ -204,6 +317,8 @@ Execution strategy:
 4. Early in a run, prefer a lightweight setup pass when it will reduce confusion later.
 5. Keep worker prompts precise, scoped, and role-aware.
 6. In live campaign mode, keep pacing responsive and leave space for user actions.
+7. Match task type to worker capabilities (for example: file-io, shell, web-research).
+8. For large artifacts, require incremental file writes in chunks instead of one giant write.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -289,12 +404,16 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
         userMessage: string,
         instruction: string,
         workLog: string[],
+        worker: AgentConfig,
     ): string {
         const interaction = getSquadInteractionConfig(runtime.config);
         const goal = getSquadGoal(runtime.config);
         const context = getSquadContext(runtime.config);
         const previousOutputs = toStringArray(workLog);
-        const workspaceFolder = `squads/${sanitizeSquadFolderName(runtime.config.name)}`;
+        const workspaceFolder = `Squads/${sanitizeSquadFolderName(runtime.config.name)}`;
+        const toolIds = worker.tools || [];
+        const capabilitySummary = inferToolCapabilities(toolIds);
+        const hasFileWrite = toolIds.includes("fs_write") || toolIds.includes("write_file");
         const styleGuidance = interaction.mode === "live_campaign"
             ? [
                 "Respond scene-ready and stay in character if your role implies it.",
@@ -307,10 +426,20 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
                 `If creating persistent artifacts, use concise files under "${workspaceFolder}".`,
                 "Write only what the orchestrator needs next.",
             ].join("\n");
+        const writeConstraint = hasFileWrite
+            ? [
+                "If a file is large, write it incrementally.",
+                "Use fs_write mode=\"overwrite\" for the first chunk and mode=\"append\" for later chunks.",
+                "Keep chunks compact (recommended <= 2000 chars per chunk).",
+                "If a target file already exists, read it first and preserve existing valid content unless explicitly asked to replace it.",
+                "Always set fs_write mode explicitly; do not rely on implicit defaults.",
+            ].join("\n")
+            : "Do not assume file-writing access if fs_write is unavailable.";
 
         return `You are part of squad "${runtime.config.name}".
 Goal: ${goal || "No explicit goal provided."}
 Context: ${context || "No extra context provided."}
+Your tool capabilities: ${capabilitySummary.length > 0 ? capabilitySummary.join(", ") : "none"}
 
 User request:
 ${userMessage}
@@ -322,19 +451,25 @@ Prior worker outputs:
 ${previousOutputs}
 
 Produce only the requested deliverable for the orchestrator.
-${styleGuidance}`;
+${styleGuidance}
+${writeConstraint}`;
     }
 
     public async run(
         config: SquadConfig,
         history: Message[],
         userMessage: string,
+        onStep?: (step: SquadRunStep, stepsSnapshot: SquadRunStep[]) => void | Promise<void>,
     ): Promise<SquadRunResult> {
         const runtime = this.getRuntime(config);
         const interaction = getSquadInteractionConfig(runtime.config);
         const steps: SquadRunStep[] = [];
         const workLog: string[] = [];
         const maxIterations = Math.max(1, runtime.config.maxIterations || DEFAULT_MAX_ITERATIONS);
+        const emitStep = async (step: SquadRunStep) => {
+            if (!onStep) return;
+            await onStep(step, [...steps]);
+        };
 
         for (let iteration = 1; iteration <= maxIterations; iteration++) {
             const decision = await this.getDirectorDecision(runtime, userMessage, history, workLog);
@@ -342,6 +477,7 @@ ${styleGuidance}`;
 
             if (decision.status === "complete") {
                 steps.push(step);
+                await emitStep(step);
                 return {
                     status: "completed",
                     response: decision.responseToUser || decision.summary,
@@ -351,6 +487,7 @@ ${styleGuidance}`;
 
             if (decision.status === "needs_user_input") {
                 steps.push(step);
+                await emitStep(step);
                 return {
                     status: "needs_user_input",
                     response: decision.userQuestion || "I need more information before the squad can continue.",
@@ -360,6 +497,7 @@ ${styleGuidance}`;
 
             if (decision.status === "blocked") {
                 steps.push(step);
+                await emitStep(step);
                 return {
                     status: "blocked",
                     response: decision.blockerReason || decision.summary,
@@ -375,6 +513,7 @@ ${styleGuidance}`;
                     blockerReason: "No valid targetAgentId/instruction was provided.",
                 };
                 steps.push(step);
+                await emitStep(step);
                 return {
                     status: "blocked",
                     response: step.directorDecision.blockerReason || step.directorDecision.summary,
@@ -383,7 +522,7 @@ ${styleGuidance}`;
             }
 
             const workerAgent = new Agent(worker);
-            const task = this.buildWorkerTask(runtime, userMessage, decision.instruction, workLog);
+            const task = this.buildWorkerTask(runtime, userMessage, decision.instruction, workLog, worker);
             const workerHistory: Message[] = [
                 ...history.slice(-8),
                 {
@@ -394,14 +533,87 @@ ${styleGuidance}`;
                 },
             ];
 
-            const workerReply = await workerAgent.process(workerHistory, this.apiKeys, this.availableTools);
-            const workerOutput = workerReply.content.trim();
+            const workerReply = await workerAgent.process(
+                workerHistory,
+                this.apiKeys,
+                this.availableTools,
+                {
+                    squadId: runtime.config.id,
+                    squadName: runtime.config.name,
+                },
+            );
+            let workerOutput = workerReply.content.trim();
+            let workerToolExecution = workerReply.toolExecution ?? {
+                attempted: 0,
+                succeeded: 0,
+                failed: 0,
+                malformed: 0,
+                verifiedFileEffects: 0,
+                verifiedShellEffects: 0,
+            };
+            const executionExpectation = inferWorkerExecutionExpectation(decision.instruction, worker);
+            let executionVerification = verifyWorkerExecution(
+                executionExpectation,
+                workerToolExecution.attempted,
+                workerToolExecution.succeeded,
+                workerToolExecution.verifiedFileEffects,
+                workerToolExecution.verifiedShellEffects,
+            );
+
+            if (!executionVerification.ok) {
+                const retryHistory: Message[] = [
+                    ...workerHistory,
+                    workerReply,
+                    {
+                        id: uuidv4(),
+                        role: "user",
+                        content: `Validation failed: ${executionVerification.reason} Re-run the instruction and satisfy all required postconditions via actual tool calls before finalizing your response.`,
+                        timestamp: Date.now(),
+                    },
+                ];
+
+                const retryReply = await workerAgent.process(
+                    retryHistory,
+                    this.apiKeys,
+                    this.availableTools,
+                    {
+                        squadId: runtime.config.id,
+                        squadName: runtime.config.name,
+                    },
+                );
+                workerOutput = retryReply.content.trim();
+                workerToolExecution = retryReply.toolExecution ?? {
+                    attempted: 0,
+                    succeeded: 0,
+                    failed: 0,
+                    malformed: 0,
+                    verifiedFileEffects: 0,
+                    verifiedShellEffects: 0,
+                };
+                executionVerification = verifyWorkerExecution(
+                    executionExpectation,
+                    workerToolExecution.attempted,
+                    workerToolExecution.succeeded,
+                    workerToolExecution.verifiedFileEffects,
+                    workerToolExecution.verifiedShellEffects,
+                );
+            }
 
             step.workerAgentId = worker.id;
             step.workerAgentName = worker.name;
             step.workerInstruction = decision.instruction;
             step.workerOutput = workerOutput;
+            step.workerToolExecution = workerToolExecution;
             steps.push(step);
+            await emitStep(step);
+
+            if (!executionVerification.ok) {
+                return {
+                    status: "blocked",
+                    response: `${worker.name} failed tool execution validation: ${executionVerification.reason}`,
+                    steps,
+                };
+            }
 
             workLog.push(
                 `[${worker.name}] Instruction: ${decision.instruction}\nOutput:\n${workerOutput}`,

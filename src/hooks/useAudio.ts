@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { loadAudioSettings } from "@/lib/audio/types";
+import { debugClientError, debugClientLog, getClientDebugHeaders } from "@/lib/debug/client";
 
 // ── TTS ──────────────────────────────────────────────
 
@@ -9,7 +10,28 @@ export function useTTS() {
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
-    const synthRef = useRef<SpeechSynthesis | null>(null);
+    const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+    const playbackResolveRef = useRef<(() => void) | null>(null);
+
+    const resolvePlayback = useCallback(() => {
+        const resolve = playbackResolveRef.current;
+        playbackResolveRef.current = null;
+        if (resolve) resolve();
+    }, []);
+
+    const stopPlayback = useCallback(() => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+            audioRef.current = null;
+        }
+        if (window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+        }
+        speechUtteranceRef.current = null;
+        setIsSpeaking(false);
+        resolvePlayback();
+    }, [resolvePlayback]);
 
     const speak = useCallback(async (text: string, voiceOverride?: string) => {
         const settings = loadAudioSettings();
@@ -26,20 +48,31 @@ export function useTTS() {
         if (!cleanText) return;
 
         // Stop any existing playback (Audio and Synthesis)
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
-        }
-        if (window.speechSynthesis) {
-            window.speechSynthesis.cancel();
-        }
+        stopPlayback();
 
         if (settings.ttsProvider === "browser") {
-            setIsSpeaking(true);
-            const utterance = new SpeechSynthesisUtterance(cleanText);
-            utterance.onend = () => setIsSpeaking(false);
-            utterance.onerror = () => setIsSpeaking(false);
-            window.speechSynthesis.speak(utterance);
+            if (!window.speechSynthesis) return;
+            await new Promise<void>((resolve) => {
+                const utterance = new SpeechSynthesisUtterance(cleanText);
+                speechUtteranceRef.current = utterance;
+                playbackResolveRef.current = resolve;
+                utterance.onstart = () => setIsSpeaking(true);
+                utterance.onend = () => {
+                    setIsSpeaking(false);
+                    if (speechUtteranceRef.current === utterance) {
+                        speechUtteranceRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+                utterance.onerror = () => {
+                    setIsSpeaking(false);
+                    if (speechUtteranceRef.current === utterance) {
+                        speechUtteranceRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+                window.speechSynthesis.speak(utterance);
+            });
             return;
         }
 
@@ -49,15 +82,25 @@ export function useTTS() {
 
         try {
             const apiKeys = localStorage.getItem("cat_gpt_api_keys") || "{}";
+            debugClientLog("useTTS", "Requesting /api/tts", {
+                provider: settings.ttsProvider,
+                voice: voiceOverride || settings.ttsVoice,
+                textLength: truncated.length,
+            });
             const response = await fetch("/api/tts", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-keys": apiKeys },
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-keys": apiKeys,
+                    ...getClientDebugHeaders(),
+                },
                 body: JSON.stringify({
                     text: truncated,
                     voice: voiceOverride || settings.ttsVoice,
                     provider: settings.ttsProvider,
                 }),
             });
+            debugClientLog("useTTS", "Received /api/tts response", { ok: response.ok, status: response.status });
 
             if (!response.ok) {
                 const err = await response.json();
@@ -68,33 +111,67 @@ export function useTTS() {
             const audio = new Audio(data.url);
             audioRef.current = audio;
 
-            audio.onplay = () => setIsSpeaking(true);
-            audio.onended = () => { setIsSpeaking(false); audioRef.current = null; };
-            audio.onerror = () => { setIsSpeaking(false); audioRef.current = null; };
+            await new Promise<void>((resolve) => {
+                playbackResolveRef.current = resolve;
 
-            await audio.play();
+                audio.onplay = () => setIsSpeaking(true);
+                audio.onended = () => {
+                    setIsSpeaking(false);
+                    if (audioRef.current === audio) {
+                        audioRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+                audio.onerror = () => {
+                    setIsSpeaking(false);
+                    if (audioRef.current === audio) {
+                        audioRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+
+                audio.play().catch(() => {
+                    setIsSpeaking(false);
+                    if (audioRef.current === audio) {
+                        audioRef.current = null;
+                    }
+                    resolvePlayback();
+                });
+            });
         } catch (err) {
+            debugClientError("useTTS", err, "TTS cloud provider failed; using browser fallback");
             console.error("TTS Error:", err);
             // Fallback to browser if API fails
-            const utterance = new SpeechSynthesisUtterance(cleanText);
-            utterance.onend = () => setIsSpeaking(false);
-            window.speechSynthesis.speak(utterance);
+            if (!window.speechSynthesis) return;
+            await new Promise<void>((resolve) => {
+                const utterance = new SpeechSynthesisUtterance(cleanText);
+                speechUtteranceRef.current = utterance;
+                playbackResolveRef.current = resolve;
+                utterance.onstart = () => setIsSpeaking(true);
+                utterance.onend = () => {
+                    setIsSpeaking(false);
+                    if (speechUtteranceRef.current === utterance) {
+                        speechUtteranceRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+                utterance.onerror = () => {
+                    setIsSpeaking(false);
+                    if (speechUtteranceRef.current === utterance) {
+                        speechUtteranceRef.current = null;
+                    }
+                    resolvePlayback();
+                };
+                window.speechSynthesis.speak(utterance);
+            });
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [resolvePlayback, stopPlayback]);
 
     const stop = useCallback(() => {
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-            audioRef.current = null;
-        }
-        if (window.speechSynthesis) {
-            window.speechSynthesis.cancel();
-        }
-        setIsSpeaking(false);
-    }, []);
+        stopPlayback();
+    }, [stopPlayback]);
 
     return { speak, stop, isSpeaking, isLoading };
 }
@@ -161,11 +238,14 @@ export function useSTT() {
                         const ext = recorder.mimeType.includes("webm") ? "webm" : "mp4";
                         formData.append("file", blob, `recording.${ext}`);
                         formData.append("model", settings.sttModel);
+                        debugClientLog("useSTT", "Requesting /api/stt", { mimeType: recorder.mimeType, model: settings.sttModel });
 
                         const response = await fetch("/api/stt", {
                             method: "POST",
+                            headers: getClientDebugHeaders(),
                             body: formData,
                         });
+                        debugClientLog("useSTT", "Received /api/stt response", { ok: response.ok, status: response.status });
 
                         if (!response.ok) {
                             const err = await response.json();
@@ -176,6 +256,7 @@ export function useSTT() {
                         resolve(data.text || "");
                     }
                 } catch (err) {
+                    debugClientError("useSTT", err, "Transcription failed");
                     console.error("STT Error:", err);
                     reject(err);
                 } finally {
@@ -211,8 +292,21 @@ export function useSTT() {
 
 function browserSTT(): Promise<string> {
     return new Promise((resolve, reject) => {
+        type BrowserSpeechRecognition = {
+            lang: string;
+            interimResults: boolean;
+            maxAlternatives: number;
+            onresult: ((event: Event & { results: SpeechRecognitionResultList }) => void) | null;
+            onerror: ((event: Event & { error?: string }) => void) | null;
+            start: () => void;
+        };
+        type SpeechRecognitionCtor = new () => BrowserSpeechRecognition;
+        const speechWindow = window as Window & {
+            SpeechRecognition?: SpeechRecognitionCtor;
+            webkitSpeechRecognition?: SpeechRecognitionCtor;
+        };
         const SpeechRecognition =
-            (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+            speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
 
         if (!SpeechRecognition) {
             reject(new Error("Web Speech API not supported in this browser"));
@@ -224,12 +318,12 @@ function browserSTT(): Promise<string> {
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
 
-        recognition.onresult = (event: any) => {
+        recognition.onresult = (event: Event & { results: SpeechRecognitionResultList }) => {
             resolve(event.results[0][0].transcript);
         };
 
-        recognition.onerror = (event: any) => {
-            reject(new Error(`Speech recognition error: ${event.error}`));
+        recognition.onerror = (event: Event & { error?: string }) => {
+            reject(new Error(`Speech recognition error: ${event.error || "unknown"}`));
         };
 
         recognition.start();

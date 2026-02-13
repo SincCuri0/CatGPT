@@ -1,11 +1,22 @@
 "use client";
 
 import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield } from "lucide-react";
 import { GROQ_TTS_VOICES, EDGE_TTS_VOICES, BROWSER_TTS_VOICES, loadAudioSettings, saveAudioSettings, TTSProvider } from "@/lib/audio/types";
-import { PROVIDERS } from "@/lib/llm/constants";
+import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_OPTIONS } from "@/lib/llm/constants";
+import {
+    buildFallbackCatalogProviders,
+    defaultModelForCatalogProvider,
+    defaultModelForProviderWithRequirements,
+    filterModelsByCapabilityRequirements,
+    isModelChatCapable,
+    supportsReasoningEffort,
+    supportsToolUse,
+} from "@/lib/llm/modelCatalog";
 import { useSettings } from "@/hooks/useSettings";
+import { debugClientError, debugClientLog } from "@/lib/debug/client";
+import { useModelCatalog } from "@/hooks/useModelCatalog";
 
 interface AgentEditorProps {
     initialData?: AgentConfig;
@@ -21,6 +32,7 @@ const AGENT_STYLES: { value: AgentStyle; label: string; desc: string; icon: Reac
 ];
 
 type VoiceOption = { id: string; label: string; desc: string };
+const ELEVENLABS_VOICES_CACHE_KEY = "cat_gpt_elevenlabs_voices";
 
 function getVoiceOptions(provider: string, elevenLabsVoices: VoiceOption[]): VoiceOption[] {
     if (provider === "browser") {
@@ -48,9 +60,45 @@ const AVAILABLE_TOOLS = [
     { id: "fs_write", name: "Write Files", desc: "Create & edit files", icon: "✏️" },
     { id: "shell_execute", name: "Terminal", desc: "Run shell commands", icon: "⌨️" },
 ];
+const FALLBACK_LLM_PROVIDERS = buildFallbackCatalogProviders();
+
+function formatCompactTokenCount(value?: number): string | null {
+    if (typeof value !== "number" || value <= 0) return null;
+    if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
+    if (value >= 1_000) return `${Math.round(value / 100) / 10}K`;
+    return String(value);
+}
+
+function getModelBadges(model: {
+    capabilities?: {
+        chat?: boolean;
+        reasoning?: boolean;
+        nativeTools?: boolean;
+        embeddings?: boolean;
+    };
+    metadata?: {
+        contextWindow?: number;
+        maxOutputTokens?: number;
+    };
+}): string[] {
+    const badges: string[] = [];
+    if (model.capabilities?.chat) badges.push("Chat");
+    if (model.capabilities?.nativeTools) badges.push("Tools");
+    if (model.capabilities?.reasoning) badges.push("Reasoning");
+    if (model.capabilities?.embeddings) badges.push("Embeddings");
+
+    const ctx = formatCompactTokenCount(model.metadata?.contextWindow);
+    if (ctx) badges.push(`${ctx} ctx`);
+
+    const out = formatCompactTokenCount(model.metadata?.maxOutputTokens);
+    if (out) badges.push(`${out} out`);
+
+    return badges;
+}
 
 export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps) {
-    const { apiKey, apiKeys } = useSettings();
+    const { apiKey, apiKeys, debugLogsEnabled } = useSettings();
+    const { providers: llmProviders, isRefreshingModels, refreshModels } = useModelCatalog();
     const [formData, setFormData] = useState<AgentConfig>(
         initialData || {
             name: "",
@@ -62,42 +110,74 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             voiceId: "troy",
             provider: "groq",
             model: "llama-3.3-70b-versatile",
+            reasoningEffort: DEFAULT_REASONING_EFFORT,
         }
     );
 
     const [activeSection, setActiveSection] = useState<"identity" | "prompt" | "model" | "tools">("identity");
     const [modelSubTab, setModelSubTab] = useState<"llm" | "voice">("llm");
+    const [toolFilteringEnabled, setToolFilteringEnabled] = useState<boolean>(() => (initialData?.tools?.length || 0) > 0);
+    const [reasoningFilteringEnabled, setReasoningFilteringEnabled] = useState<boolean>(
+        () => Boolean(initialData && (initialData.reasoningEffort || DEFAULT_REASONING_EFFORT) !== "none"),
+    );
     const [ttsProvider, setTtsProvider] = useState<TTSProvider>(() => loadAudioSettings().ttsProvider || "groq");
     const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
     const [generatePromptError, setGeneratePromptError] = useState<string | null>(null);
     const [elevenLabsVoices, setElevenLabsVoices] = useState<VoiceOption[]>([]);
+    const [isRefreshingVoices, setIsRefreshingVoices] = useState(false);
 
-    useEffect(() => {
-        try {
-            const cached = localStorage.getItem("cat_gpt_elevenlabs_voices");
-            if (cached) {
-                const parsed = JSON.parse(cached) as VoiceOption[];
-                if (Array.isArray(parsed)) setElevenLabsVoices(parsed);
+    const loadElevenLabsVoices = useCallback(async ({ forceRefresh = false }: { forceRefresh?: boolean } = {}) => {
+        if (!forceRefresh) {
+            try {
+                const cached = localStorage.getItem(ELEVENLABS_VOICES_CACHE_KEY);
+                if (cached) {
+                    const parsed = JSON.parse(cached) as VoiceOption[];
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        setElevenLabsVoices(parsed);
+                        return;
+                    }
+                }
+            } catch {
+                // ignore cache parse errors and fall through to network fetch
             }
-        } catch {
-            // ignore cache parse errors
         }
 
-        fetch("/api/elevenlabs/voices")
-            .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Voice fetch failed"))))
-            .then((data) => {
-                if (Array.isArray(data.voices)) {
-                    const mapped = data.voices.map((voice: { id: string; label: string; gender?: string }) => ({
-                        id: voice.id,
-                        label: voice.label,
-                        desc: `${voice.gender || "neutral"} (ElevenLabs)`,
-                    }));
-                    setElevenLabsVoices(mapped);
-                    localStorage.setItem("cat_gpt_elevenlabs_voices", JSON.stringify(mapped));
-                }
-            })
-            .catch(() => undefined);
-    }, []);
+        const endpoint = forceRefresh ? "/api/elevenlabs/voices?refresh=1" : "/api/elevenlabs/voices";
+        if (forceRefresh) {
+            setIsRefreshingVoices(true);
+        }
+
+        try {
+            debugClientLog("AgentEditor", `Requesting ${endpoint}`);
+            const response = await fetch(endpoint, {
+                headers: debugLogsEnabled ? { "x-debug-logs": "1" } : undefined,
+            });
+            if (!response.ok) {
+                throw new Error("Voice fetch failed");
+            }
+
+            const data = await response.json();
+            if (Array.isArray(data.voices)) {
+                const mapped = data.voices.map((voice: { id: string; label: string; gender?: string }) => ({
+                    id: voice.id,
+                    label: voice.label,
+                    desc: `${voice.gender || "neutral"} (ElevenLabs)`,
+                }));
+                setElevenLabsVoices(mapped);
+                localStorage.setItem(ELEVENLABS_VOICES_CACHE_KEY, JSON.stringify(mapped));
+            }
+        } catch (error) {
+            debugClientError("AgentEditor", error, "Failed to load ElevenLabs voices");
+        } finally {
+            if (forceRefresh) {
+                setIsRefreshingVoices(false);
+            }
+        }
+    }, [debugLogsEnabled]);
+
+    useEffect(() => {
+        void loadElevenLabsVoices();
+    }, [loadElevenLabsVoices]);
 
     const voiceOptions = useMemo(() => getVoiceOptions(ttsProvider, elevenLabsVoices), [ttsProvider, elevenLabsVoices]);
 
@@ -137,24 +217,147 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
     );
 
     // Helpers for LLM selection
-    const currentProvider = PROVIDERS.find(p => p.id === (formData.provider || "groq")) || PROVIDERS[0];
-    const availableModels = currentProvider.models;
+    const currentProvider = useMemo(() => (
+        llmProviders.find((provider) => provider.id === (formData.provider || "groq"))
+        || llmProviders[0]
+        || FALLBACK_LLM_PROVIDERS[0]
+    ), [formData.provider, llmProviders]);
+    const hasSelectedTools = (formData.tools?.length || 0) > 0;
+    const effectiveToolFilteringEnabled = toolFilteringEnabled || hasSelectedTools;
+    const chatCapableModels = useMemo(
+        () => (currentProvider?.models || []).filter((model) => isModelChatCapable(model, currentProvider?.id || "groq")),
+        [currentProvider],
+    );
+    const filteredByCapabilityModels = useMemo(
+        () => filterModelsByCapabilityRequirements(currentProvider?.id || "groq", chatCapableModels, {
+            requireToolUse: effectiveToolFilteringEnabled,
+            requireReasoning: reasoningFilteringEnabled,
+        }),
+        [chatCapableModels, currentProvider?.id, effectiveToolFilteringEnabled, reasoningFilteringEnabled],
+    );
+    const capabilityFiltersActive = effectiveToolFilteringEnabled || reasoningFilteringEnabled;
+    const availableModels = filteredByCapabilityModels.length > 0
+        ? filteredByCapabilityModels
+        : chatCapableModels;
+    const fellBackFromCapabilityFiltering = capabilityFiltersActive && filteredByCapabilityModels.length === 0;
+    const selectedModelId = formData.model || currentProvider?.defaultModel || availableModels[0]?.id || "llama-3.3-70b-versatile";
+    const selectedModel = useMemo(
+        () => availableModels.find((model) => model.id === selectedModelId),
+        [availableModels, selectedModelId],
+    );
+    const selectedModelSupportsToolUse = selectedModel
+        ? (selectedModel.capabilities?.nativeTools ?? supportsToolUse(currentProvider?.id || "groq", selectedModel.id))
+        : supportsToolUse(currentProvider?.id || "groq", selectedModelId);
+    const selectedModelSupportsReasoning = selectedModel
+        ? (selectedModel.capabilities?.reasoning ?? supportsReasoningEffort(currentProvider?.id || "groq", selectedModel.id))
+        : supportsReasoningEffort(currentProvider?.id || "groq", selectedModelId);
+
+    useEffect(() => {
+        if (!hasSelectedTools) return;
+        if (toolFilteringEnabled) return;
+        setToolFilteringEnabled(true);
+    }, [hasSelectedTools, toolFilteringEnabled]);
+
+    useEffect(() => {
+        if (reasoningFilteringEnabled) {
+            if ((formData.reasoningEffort || "none") === "none") {
+                setFormData((prev) => ({ ...prev, reasoningEffort: DEFAULT_REASONING_EFFORT }));
+            }
+            return;
+        }
+        if ((formData.reasoningEffort || "none") !== "none") {
+            setFormData((prev) => ({ ...prev, reasoningEffort: "none" }));
+        }
+    }, [formData.reasoningEffort, reasoningFilteringEnabled]);
+
+    useEffect(() => {
+        if (!currentProvider || availableModels.length === 0) return;
+        const selectedModelInFilteredList = availableModels.some((model) => model.id === (formData.model || ""));
+        if (selectedModelInFilteredList) return;
+
+        const defaultModel = defaultModelForProviderWithRequirements(currentProvider, {
+            requireToolUse: effectiveToolFilteringEnabled,
+            requireReasoning: reasoningFilteringEnabled,
+        });
+        const modelFromFilteredList = availableModels.find((model) => model.id === defaultModel)?.id;
+        const fallbackModel = modelFromFilteredList || availableModels[0]?.id || currentProvider.defaultModel;
+        if (!fallbackModel) return;
+        if (fallbackModel === formData.model) return;
+
+        setFormData((prev) => ({ ...prev, model: fallbackModel }));
+    }, [
+        availableModels,
+        currentProvider,
+        effectiveToolFilteringEnabled,
+        formData.model,
+        reasoningFilteringEnabled,
+    ]);
+
+    useEffect(() => {
+        const currentEffort = formData.reasoningEffort || DEFAULT_REASONING_EFFORT;
+        if (!reasoningFilteringEnabled || selectedModelSupportsReasoning || currentEffort === "none") return;
+        setFormData((prev) => ({ ...prev, reasoningEffort: "none" }));
+    }, [formData.reasoningEffort, reasoningFilteringEnabled, selectedModelSupportsReasoning]);
+
+    useEffect(() => {
+        if (!effectiveToolFilteringEnabled || selectedModelSupportsToolUse) return;
+        if (!currentProvider) return;
+        const fallbackModel = defaultModelForProviderWithRequirements(currentProvider, {
+            requireToolUse: true,
+            requireReasoning: reasoningFilteringEnabled,
+        });
+        if (!fallbackModel || fallbackModel === formData.model) return;
+        setFormData((prev) => ({ ...prev, model: fallbackModel }));
+    }, [
+        currentProvider,
+        effectiveToolFilteringEnabled,
+        formData.model,
+        reasoningFilteringEnabled,
+        selectedModelSupportsToolUse,
+    ]);
+
+    useEffect(() => {
+        if (!currentProvider || availableModels.length === 0) return;
+        if (!(formData.model || "").trim()) {
+            const defaultModel = defaultModelForProviderWithRequirements(currentProvider, {
+                requireToolUse: effectiveToolFilteringEnabled,
+                requireReasoning: reasoningFilteringEnabled,
+            });
+            const fallbackModel = availableModels.find((model) => model.id === defaultModel)?.id || availableModels[0]?.id;
+            if (!fallbackModel) return;
+            setFormData((prev) => ({ ...prev, model: fallbackModel }));
+            return;
+        }
+    }, [
+        availableModels,
+        currentProvider,
+        effectiveToolFilteringEnabled,
+        formData.model,
+        reasoningFilteringEnabled,
+    ]);
 
     const handleGenerateInstructions = async () => {
         setIsGeneratingPrompt(true);
         setGeneratePromptError(null);
 
         try {
+            debugClientLog("AgentEditor", "Requesting /api/agents/generate-instructions", {
+                provider: formData.provider || "groq",
+                model: selectedModelId,
+                reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT,
+            });
             const response = await fetch("/api/agents/generate-instructions", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     "x-groq-api-key": apiKey || "",
                     "x-api-keys": JSON.stringify(apiKeys),
+                    ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
                 },
                 body: JSON.stringify({
                     provider: formData.provider || "groq",
-                    model: formData.model || currentProvider.defaultModel,
+                    model: selectedModelId,
+                    reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT,
                     name: formData.name || "",
                     role: formData.role || "",
                     style: formData.style || "assistant",
@@ -164,6 +367,10 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             });
 
             const data = await response.json();
+            debugClientLog("AgentEditor", "Received /api/agents/generate-instructions response", {
+                ok: response.ok,
+                status: response.status,
+            });
 
             if (!response.ok || data.error) {
                 throw new Error(data.error || "Failed to generate instructions.");
@@ -176,6 +383,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
 
             setFormData((prev) => ({ ...prev, systemPrompt: generatedText }));
         } catch (error: unknown) {
+            debugClientError("AgentEditor", error, "Failed to generate instructions");
             const message = error instanceof Error ? error.message : "Failed to generate instructions.";
             setGeneratePromptError(message);
         } finally {
@@ -355,8 +563,16 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                         AI Provider
                                     </label>
                                     <div className="grid grid-cols-2 gap-2">
-                                        {PROVIDERS.map((p) => {
+                                        {llmProviders.map((p) => {
                                             const isSelected = (formData.provider || "groq") === p.id;
+                                            const providerChatModels = p.models.filter((model) => isModelChatCapable(model, p.id));
+                                            const defaultFilteredModel = defaultModelForProviderWithRequirements(p, {
+                                                requireToolUse: effectiveToolFilteringEnabled,
+                                                requireReasoning: reasoningFilteringEnabled,
+                                            });
+                                            const defaultChatModel = providerChatModels.find((model) => model.id === defaultFilteredModel)?.id
+                                                || providerChatModels[0]?.id
+                                                || defaultModelForCatalogProvider(p);
                                             return (
                                                 <button
                                                     key={p.id}
@@ -364,7 +580,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                                         setFormData({
                                                             ...formData,
                                                             provider: p.id,
-                                                            model: p.defaultModel,
+                                                            model: defaultChatModel,
                                                         });
                                                     }}
                                                     className={`px-2.5 py-2 rounded-lg border text-left transition-all ${isSelected
@@ -381,31 +597,139 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                        <Cpu size={12} />
-                                        AI Model ({currentProvider.name})
-                                    </label>
+                                    <label className="text-xs font-medium text-[#b4b4b4]">Capability Filters</label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (hasSelectedTools) return;
+                                                setToolFilteringEnabled((prev) => !prev);
+                                            }}
+                                            className={`px-3 py-2.5 rounded-lg border text-left transition-all ${effectiveToolFilteringEnabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                } ${hasSelectedTools ? "opacity-80 cursor-not-allowed" : ""}`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">Tool Use</div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                {hasSelectedTools
+                                                    ? "Enabled automatically because this agent has tools."
+                                                    : (effectiveToolFilteringEnabled ? "Filtering to tool-capable models." : "Show all chat-capable models.")}
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setReasoningFilteringEnabled((prev) => !prev)}
+                                            className={`px-3 py-2.5 rounded-lg border text-left transition-all ${reasoningFilteringEnabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">Reasoning</div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                {reasoningFilteringEnabled
+                                                    ? "Filtering to reasoning-capable models."
+                                                    : "Reasoning disabled (effort hidden)."}
+                                            </div>
+                                        </button>
+                                    </div>
+                                    {fellBackFromCapabilityFiltering && (
+                                        <p className="text-[11px] text-[#f59e0b]">
+                                            No models matched the active filters for this provider. Showing all chat-capable models.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                            <Cpu size={12} />
+                                            AI Model ({currentProvider.name})
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => void refreshModels()}
+                                            disabled={isRefreshingModels}
+                                            className="px-2.5 py-1 rounded-md border border-[#424242] text-[11px] font-medium text-[#d4d4d8] hover:bg-[#2f2f2f] hover:border-[#676767] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            {isRefreshingModels ? "Refreshing..." : "Refresh Models"}
+                                        </button>
+                                    </div>
                                     <div className="grid grid-cols-1 gap-1.5 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
                                         {availableModels.map((model) => {
-                                            const isSelected = (formData.model || currentProvider.defaultModel) === model.id;
+                                            const isSelected = selectedModelId === model.id;
+                                            const badges = getModelBadges(model);
                                             return (
                                                 <button
                                                     key={model.id}
                                                     onClick={() => setFormData({ ...formData, model: model.id })}
-                                                    className={`px-3 py-2.5 rounded-lg border flex items-center justify-between gap-3 transition-all ${isSelected
+                                                    className={`px-3 py-2.5 rounded-lg border text-left transition-all ${isSelected
                                                         ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
                                                         : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
                                                         }`}
                                                 >
-                                                    <span className={`text-xs font-medium truncate ${isSelected ? "text-white" : "text-[#ececec]"}`}>
-                                                        {model.label}
-                                                    </span>
-                                                    <span className="text-[10px] text-[#8e8ea0] hidden sm:inline">{model.description}</span>
+                                                    <div className="min-w-0">
+                                                        <div className={`text-xs font-medium truncate ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                            {model.label}
+                                                        </div>
+                                                        {model.description && (
+                                                            <div className="text-[10px] text-[#8e8ea0] truncate">{model.description}</div>
+                                                        )}
+                                                        {badges.length > 0 && (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {badges.map((badge) => (
+                                                                    <span
+                                                                        key={`${model.id}-${badge}`}
+                                                                        className="px-1.5 py-0.5 rounded border border-white/15 bg-[#252525] text-[10px] text-[#b4b4b4]"
+                                                                    >
+                                                                        {badge}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </button>
                                             );
                                         })}
                                     </div>
                                 </div>
+
+                                {reasoningFilteringEnabled && (
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                            <Sparkles size={12} />
+                                            Thinking / Reasoning Effort
+                                        </label>
+                                        {!selectedModelSupportsReasoning && (
+                                            <p className="text-[11px] text-[#8e8ea0]">
+                                                This model does not support configurable reasoning effort. Reasoning is set to Off.
+                                            </p>
+                                        )}
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                            {REASONING_EFFORT_OPTIONS.map((option) => {
+                                                const selectedEffort = formData.reasoningEffort || DEFAULT_REASONING_EFFORT;
+                                                const isSelected = selectedEffort === option.id;
+                                                const isDisabled = !selectedModelSupportsReasoning && option.id !== "none";
+                                                return (
+                                                    <button
+                                                        key={option.id}
+                                                        disabled={isDisabled}
+                                                        onClick={() => setFormData({ ...formData, reasoningEffort: option.id })}
+                                                        className={`px-3 py-2.5 rounded-lg border text-left transition-all ${isSelected
+                                                            ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                            : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                            } ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                                                    >
+                                                        <div className={`text-xs font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                            {option.label}
+                                                        </div>
+                                                        <div className="text-[10px] text-[#8e8ea0] mt-0.5">{option.description}</div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </>
                         ) : (
                             <>
@@ -435,10 +759,22 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
-                                        <Volume2 size={12} />
-                                        TTS Voice
-                                    </label>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                            <Volume2 size={12} />
+                                            TTS Voice
+                                        </label>
+                                        {ttsProvider === "elevenlabs" && (
+                                            <button
+                                                type="button"
+                                                onClick={() => void loadElevenLabsVoices({ forceRefresh: true })}
+                                                disabled={isRefreshingVoices}
+                                                className="px-2.5 py-1 rounded-md border border-[#424242] text-[11px] font-medium text-[#d4d4d8] hover:bg-[#2f2f2f] hover:border-[#676767] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                {isRefreshingVoices ? "Refreshing..." : "Refresh Voices"}
+                                            </button>
+                                        )}
+                                    </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
                                         {voiceOptions.map((voice) => {
                                             const isSelected = (formData.voiceId || "troy") === voice.id;
@@ -522,7 +858,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                         Cancel
                     </button>
                     <button
-                        onClick={() => onSave(formData)}
+                        onClick={() => onSave({ ...formData, reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT })}
                         disabled={!formData.name.trim()}
                         className="flex items-center gap-2 px-6 py-2 bg-[#10a37f] hover:bg-[#1a7f64] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium shadow-sm transition-all"
                     >

@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from "./types";
+
 export interface Model {
     id: string;
     label: string;
@@ -14,6 +16,21 @@ export interface ProviderInfo {
     apiKeyLink?: string;
 }
 
+export interface ReasoningEffortOption {
+    id: ReasoningEffort;
+    label: string;
+    description: string;
+}
+
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+
+export const REASONING_EFFORT_OPTIONS: ReasoningEffortOption[] = [
+    { id: "none", label: "Off", description: "Favor fastest response with no extra reasoning budget." },
+    { id: "low", label: "Low", description: "Use a small reasoning budget for simple tasks." },
+    { id: "medium", label: "Medium", description: "Balanced depth and speed for most prompts." },
+    { id: "high", label: "High", description: "Use deeper reasoning for complex prompts." },
+];
+
 export const PROVIDERS: ProviderInfo[] = [
     {
         id: "groq",
@@ -23,8 +40,6 @@ export const PROVIDERS: ProviderInfo[] = [
         models: [
             { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", description: "Best quality" },
             { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B", description: "Fast & light" },
-            { id: "llama-guard-3-8b", label: "Llama Guard 3", description: "Safety-focused" },
-            { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B", description: "32K context" },
             { id: "gemma2-9b-it", label: "Gemma 2 9B", description: "Google model on Groq" },
         ],
         requiresApiKey: true,

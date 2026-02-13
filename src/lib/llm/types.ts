@@ -3,6 +3,8 @@ export interface LLMMessage {
     content: string;
 }
 
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
+
 export interface LLMToolDefinition {
     id: string;
     name: string;
@@ -26,6 +28,7 @@ export interface LLMChatOptions {
     max_tokens?: number;
     tools?: LLMToolDefinition[];
     toolChoice?: "none" | "auto";
+    reasoningEffort?: ReasoningEffort;
 }
 
 export interface LLMResponse {
@@ -37,5 +40,6 @@ export interface LLMResponse {
 }
 
 export interface LLMClient {
+    supportsNativeToolCalling?: boolean;
     chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse>;
 }

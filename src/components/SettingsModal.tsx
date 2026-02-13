@@ -1,8 +1,8 @@
 "use client";
 
 import { useSettings } from "@/hooks/useSettings";
-import { useState, useEffect } from "react";
-import { X, Shield, ShieldAlert, Key, Save, Cat, ExternalLink, Check } from "lucide-react";
+import { useState } from "react";
+import { X, Shield, ShieldAlert, Key, Save, Cat, ExternalLink, Check, Bug } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PROVIDERS } from "@/lib/llm/constants";
 
@@ -21,20 +21,36 @@ const API_KEY_PROVIDERS = [
 ];
 
 export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-    const { apiKeys, setProviderKey, serverConfiguredKeys, safeMode, setSafeMode } = useSettings();
-    const [tempKeys, setTempKeys] = useState<Record<string, string>>({});
+    const {
+        apiKeys,
+        setProviderKey,
+        serverConfiguredKeys,
+        safeMode,
+        setSafeMode,
+        debugLogsEnabled,
+        setDebugLogsEnabled,
+    } = useSettings();
+    const [tempKeys, setTempKeys] = useState<Record<string, string> | null>(null);
+    const effectiveKeys = tempKeys ?? apiKeys;
 
-    useEffect(() => {
-        if (isOpen) {
-            setTempKeys(apiKeys);
-        }
-    }, [isOpen, apiKeys]);
+    const handleKeyChange = (providerId: string, key: string) => {
+        setTempKeys((prev) => ({
+            ...(prev ?? apiKeys),
+            [providerId]: key,
+        }));
+    };
+
+    const handleClose = () => {
+        setTempKeys(null);
+        onClose();
+    };
 
     const handleSave = () => {
         // Save all changed keys
-        Object.entries(tempKeys).forEach(([provider, key]) => {
+        Object.entries(effectiveKeys).forEach(([provider, key]) => {
             setProviderKey(provider, key);
         });
+        setTempKeys(null);
         onClose();
     };
 
@@ -65,7 +81,7 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                 <p className="text-[#565f89] text-sm mt-1 font-medium">Tweak the environment.</p>
                             </div>
                             <button
-                                onClick={onClose}
+                                onClick={handleClose}
                                 className="p-2 hover:bg-[#24283b] rounded-full transition-colors text-[#565f89] hover:text-[#f7768e]"
                             >
                                 <X className="w-6 h-6" />
@@ -106,10 +122,10 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#565f89] group-focus-within:text-[#ff9e64] transition-colors" />
                                                 <input
                                                     type="password"
-                                                    value={tempKeys[provider.id] || ""}
-                                                    onChange={(e) => setTempKeys({ ...tempKeys, [provider.id]: e.target.value })}
+                                                    value={effectiveKeys[provider.id] || ""}
+                                                    onChange={(e) => handleKeyChange(provider.id, e.target.value)}
                                                     placeholder={isServerSet ? "Managed by System (Optional override)" : `${provider.name} API Key`}
-                                                    className={`w-full bg-[#16161e] border ${isServerSet && !tempKeys[provider.id] ? "border-[#9ece6a]/30" : "border-[#414868]"} rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-[#ff9e64] focus:ring-1 focus:ring-[#ff9e64] transition-all placeholder:text-[#565f89] text-sm`}
+                                                    className={`w-full bg-[#16161e] border ${isServerSet && !effectiveKeys[provider.id] ? "border-[#9ece6a]/30" : "border-[#414868]"} rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-[#ff9e64] focus:ring-1 focus:ring-[#ff9e64] transition-all placeholder:text-[#565f89] text-sm`}
                                                 />
                                             </div>
                                         </div>
@@ -141,11 +157,36 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                         : "Dangerous. Cats have full shell access. Expect files to disappear."}
                                 </p>
                             </div>
+
+                            {/* Debug Logs Section */}
+                            <div className="bg-[#24283b] rounded-2xl p-5 border border-[#414868]">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="flex items-center gap-2 text-sm font-bold text-[#c0caf5]">
+                                        <Bug className={`w-4 h-4 ${debugLogsEnabled ? "text-[#7dcfff]" : "text-[#565f89]"}`} />
+                                        Console Debug Logs
+                                    </span>
+                                    <button
+                                        onClick={() => setDebugLogsEnabled(!debugLogsEnabled)}
+                                        className={`relative w-12 h-7 rounded-full transition-colors ${debugLogsEnabled ? "bg-[#7dcfff]" : "bg-[#414868]"
+                                            }`}
+                                    >
+                                        <div
+                                            className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${debugLogsEnabled ? "left-6" : "left-1"
+                                                }`}
+                                        />
+                                    </button>
+                                </div>
+                                <p className="text-xs text-[#787c99] leading-relaxed">
+                                    {debugLogsEnabled
+                                        ? "Enabled. API routes print debug details to the console."
+                                        : "Disabled. API debug logging is muted unless explicitly enabled."}
+                                </p>
+                            </div>
                         </div>
 
                         <div className="pt-6 flex justify-end gap-3 flex-shrink-0 mt-auto border-t border-[#414868]/50">
                             <button
-                                onClick={onClose}
+                                onClick={handleClose}
                                 className="px-6 py-3 text-sm font-bold text-[#787c99] hover:text-white hover:bg-[#24283b] rounded-xl transition-colors"
                             >
                                 Cancel

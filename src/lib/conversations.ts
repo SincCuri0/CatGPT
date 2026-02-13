@@ -1,12 +1,19 @@
 import { Message } from "./core/types";
 import { SquadRunStep } from "./core/Squad";
+import type { ReasoningEffort } from "./llm/types";
 
 export interface SquadTraceTurn {
     id: string;
     timestamp: number;
     userMessage: string;
-    status: "completed" | "needs_user_input" | "blocked" | "max_iterations";
+    status: "in_progress" | "completed" | "needs_user_input" | "blocked" | "max_iterations";
     steps: SquadRunStep[];
+}
+
+export interface ConversationAgentOverrides {
+    provider?: string;
+    model?: string;
+    reasoningEffort?: ReasoningEffort;
 }
 
 export interface Conversation {
@@ -15,6 +22,7 @@ export interface Conversation {
     title: string;
     messages: Message[];
     squadTrace?: SquadTraceTurn[];
+    agentOverrides?: ConversationAgentOverrides;
     createdAt: number;
     updatedAt: number;
 }

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { LLMChatOptions, LLMClient, LLMMessage, LLMResponse } from "../types";
 import { LLMProvider, ProviderConfig } from "../providerTypes";
+import { supportsOpenAIReasoningEffort } from "../modelCatalog";
 
 const OPENAI_MODELS = [
     { id: "gpt-4o", label: "GPT-4o", description: "Most capable model" },
@@ -9,6 +10,7 @@ const OPENAI_MODELS = [
 ];
 
 class OpenAIClient implements LLMClient {
+    public readonly supportsNativeToolCalling = true;
     private client: OpenAI;
     private model: string;
 
@@ -19,7 +21,7 @@ class OpenAIClient implements LLMClient {
 
     async chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse> {
         try {
-            const completion = await this.client.chat.completions.create({
+            const requestPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
                 messages: messages.map(m => ({ role: m.role, content: m.content })),
                 model: this.model,
                 temperature: options?.temperature ?? 0.7,
@@ -33,7 +35,13 @@ class OpenAIClient implements LLMClient {
                     },
                 })),
                 tool_choice: options?.toolChoice === "none" ? "none" : "auto",
-            });
+            };
+
+            if (options?.reasoningEffort && options.reasoningEffort !== "none" && supportsOpenAIReasoningEffort(this.model)) {
+                requestPayload.reasoning_effort = options.reasoningEffort;
+            }
+
+            const completion = await this.client.chat.completions.create(requestPayload);
 
             const message = completion.choices[0]?.message;
             const toolCalls = message?.tool_calls

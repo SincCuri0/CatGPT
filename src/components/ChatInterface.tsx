@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { AgentConfig } from "@/lib/core/Agent";
 import { getAgentPersonality } from "@/lib/agentPersonality";
 import { Message } from "@/lib/core/types";
-import { Send, Paperclip, Mic, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { SquadInteractionMode } from "@/lib/core/Squad";
+import { Send, Paperclip, Mic, MicOff, Volume2, VolumeX, Loader2, SkipForward, Cat, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTTS, useSTT } from "@/hooks/useAudio";
@@ -12,10 +13,13 @@ import { useTTS, useSTT } from "@/hooks/useAudio";
 interface ChatInterfaceProps {
     agent: AgentConfig;
     participantAgents?: AgentConfig[];
+    interactionMode?: SquadInteractionMode;
     onSendMessage: (text: string) => Promise<void>;
+    onRegenerateFromError?: (messageId: string) => Promise<void>;
     messages: Message[];
     isProcessing: boolean;
     slashCommands?: SlashCommandOption[];
+    showDefaultAgentLanding?: boolean;
 }
 
 export interface SlashCommandOption {
@@ -23,8 +27,32 @@ export interface SlashCommandOption {
     description: string;
 }
 
-function TypewriterContent({ text, enabled }: { text: string; enabled: boolean }) {
+function TypewriterContent({
+    text,
+    enabled,
+    onComplete,
+}: {
+    text: string;
+    enabled: boolean;
+    onComplete?: () => void;
+}) {
     const [visibleChars, setVisibleChars] = useState(() => (enabled ? 0 : text.length));
+    const didCompleteRef = useRef(false);
+
+    useEffect(() => {
+        if (!enabled) {
+            if (!didCompleteRef.current) {
+                didCompleteRef.current = true;
+                onComplete?.();
+            }
+            return;
+        }
+
+        if (visibleChars >= text.length && !didCompleteRef.current) {
+            didCompleteRef.current = true;
+            onComplete?.();
+        }
+    }, [enabled, onComplete, text.length, visibleChars]);
 
     useEffect(() => {
         if (!enabled || visibleChars >= text.length) {
@@ -55,17 +83,30 @@ function TypewriterContent({ text, enabled }: { text: string; enabled: boolean }
 export function ChatInterface({
     agent,
     participantAgents = [],
+    interactionMode,
     onSendMessage,
+    onRegenerateFromError,
     messages,
     isProcessing,
     slashCommands = [],
+    showDefaultAgentLanding = false,
 }: ChatInterfaceProps) {
     const [input, setInput] = useState("");
     const scrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [baselineMessageIds] = useState<Set<string>>(() => new Set(messages.map((msg) => msg.id)));
     const autoPlayedMessageIdsRef = useRef<Set<string>>(new Set());
+    const queuedPresentationIdsRef = useRef<Set<string>>(new Set());
+    const presentationQueueRef = useRef<string[]>([]);
+    const queueIsRunningRef = useRef(false);
+    const messagesRef = useRef<Message[]>(messages);
+    const typewriterResolversRef = useRef<Map<string, () => void>>(new Map());
+    const [revealedPresentationIds, setRevealedPresentationIds] = useState<Set<string>>(new Set());
+    const [skippedTypewriterMessageIds, setSkippedTypewriterMessageIds] = useState<Set<string>>(new Set());
+    const [activePresentationMessageId, setActivePresentationMessageId] = useState<string | null>(null);
+    const [isPresentingQueue, setIsPresentingQueue] = useState(false);
     const personality = getAgentPersonality(agent);
+    const isLiveCampaign = interactionMode === "live_campaign";
 
     // Audio hooks
     const { speak, stop, isSpeaking, isLoading: ttsLoading } = useTTS();
@@ -133,14 +174,14 @@ export function ChatInterface({
     const shouldTypewriter = useCallback((msg: Message, speaker: AgentConfig): boolean => {
         if (msg.role !== "assistant") return false;
         if (baselineMessageIds.has(msg.id)) return false;
-        if (msg.typewriter) return true;
+        if (typeof msg.typewriter === "boolean") return msg.typewriter;
         return resolveStyle(msg, speaker) === "character";
     }, [baselineMessageIds, resolveStyle]);
 
     const shouldAutoPlay = useCallback((msg: Message, speaker: AgentConfig): boolean => {
         if (msg.role !== "assistant") return false;
         if (baselineMessageIds.has(msg.id)) return false;
-        if (msg.autoPlay) return true;
+        if (typeof msg.autoPlay === "boolean") return msg.autoPlay;
         return resolveStyle(msg, speaker) === "character";
     }, [baselineMessageIds, resolveStyle]);
 
@@ -148,12 +189,122 @@ export function ChatInterface({
         msg.voiceId || speaker.voiceId || agent.voiceId || "en-US-ChristopherNeural"
     ), [agent.voiceId]);
 
+    const shouldSequencePresentation = useCallback((msg: Message, speaker: AgentConfig): boolean => {
+        if (!isLiveCampaign) return false;
+        return shouldTypewriter(msg, speaker) || shouldAutoPlay(msg, speaker);
+    }, [isLiveCampaign, shouldAutoPlay, shouldTypewriter]);
+
+    const resolveTypewriterPresentation = useCallback((msgId: string) => {
+        const resolve = typewriterResolversRef.current.get(msgId);
+        if (!resolve) return;
+        typewriterResolversRef.current.delete(msgId);
+        resolve();
+    }, []);
+
+    const processPresentationQueue = useCallback(async () => {
+        if (!isLiveCampaign || queueIsRunningRef.current) return;
+        queueIsRunningRef.current = true;
+
+        try {
+            while (presentationQueueRef.current.length > 0) {
+                const nextId = presentationQueueRef.current.shift();
+                if (!nextId) continue;
+                queuedPresentationIdsRef.current.delete(nextId);
+
+                const nextMessage = messagesRef.current.find((msg) => msg.id === nextId);
+                if (!nextMessage) continue;
+
+                const speaker = resolveSpeaker(nextMessage);
+                const typewriterEnabled = shouldTypewriter(nextMessage, speaker);
+                const autoPlayEnabled = shouldAutoPlay(nextMessage, speaker);
+
+                let typewriterPromise: Promise<void> = Promise.resolve();
+                if (typewriterEnabled) {
+                    typewriterPromise = new Promise<void>((resolve) => {
+                        typewriterResolversRef.current.set(nextMessage.id, resolve);
+                    });
+                }
+
+                setIsPresentingQueue(true);
+                setActivePresentationMessageId(nextMessage.id);
+                setRevealedPresentationIds((prev) => {
+                    const next = new Set(prev);
+                    next.add(nextMessage.id);
+                    return next;
+                });
+
+                let speakPromise: Promise<void> = Promise.resolve();
+                if (autoPlayEnabled) {
+                    setSpeakingMsgId(nextMessage.id);
+                    const voiceId = resolveVoiceId(nextMessage, speaker);
+                    const playback = speak(nextMessage.content, voiceId);
+                    playback.finally(() => {
+                        setSpeakingMsgId((current) => (current === nextMessage.id ? null : current));
+                    });
+                    speakPromise = playback.catch(() => undefined);
+                }
+
+                await Promise.all([typewriterPromise, speakPromise]);
+            }
+        } finally {
+            queueIsRunningRef.current = false;
+            setIsPresentingQueue(false);
+            setActivePresentationMessageId(null);
+        }
+    }, [isLiveCampaign, resolveSpeaker, resolveVoiceId, shouldAutoPlay, shouldTypewriter, speak]);
+
+    useEffect(() => {
+        messagesRef.current = messages;
+    }, [messages]);
+
+    useEffect(() => {
+        if (!isLiveCampaign) {
+            presentationQueueRef.current = [];
+            queuedPresentationIdsRef.current.clear();
+            queueIsRunningRef.current = false;
+            setIsPresentingQueue(false);
+            setActivePresentationMessageId(null);
+            setSkippedTypewriterMessageIds(new Set());
+            return;
+        }
+
+        for (const msg of messages) {
+            const speaker = resolveSpeaker(msg);
+            if (!shouldSequencePresentation(msg, speaker)) continue;
+            if (revealedPresentationIds.has(msg.id)) continue;
+            if (queuedPresentationIdsRef.current.has(msg.id)) continue;
+
+            queuedPresentationIdsRef.current.add(msg.id);
+            presentationQueueRef.current.push(msg.id);
+        }
+
+        if (presentationQueueRef.current.length > 0) {
+            void processPresentationQueue();
+        }
+    }, [
+        isLiveCampaign,
+        messages,
+        processPresentationQueue,
+        resolveSpeaker,
+        revealedPresentationIds,
+        shouldSequencePresentation,
+    ]);
+
     // Auto-scroll to bottom
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages, isProcessing]);
+    }, [messages, isProcessing, isPresentingQueue, revealedPresentationIds]);
+
+    useEffect(() => {
+        const resolvers = typewriterResolversRef.current;
+        return () => {
+            resolvers.forEach((resolve) => resolve());
+            resolvers.clear();
+            stop();
+        };
+    }, [stop]);
 
     // Auto-resize textarea
     useEffect(() => {
@@ -164,6 +315,7 @@ export function ChatInterface({
     }, [input]);
 
     useEffect(() => {
+        if (isLiveCampaign) return;
         const latestAssistant = [...messages].reverse().find((msg) => msg.role === "assistant");
         if (!latestAssistant) return;
         if (autoPlayedMessageIdsRef.current.has(latestAssistant.id)) return;
@@ -174,11 +326,51 @@ export function ChatInterface({
         autoPlayedMessageIdsRef.current.add(latestAssistant.id);
         const voiceId = resolveVoiceId(latestAssistant, speaker);
         speak(latestAssistant.content, voiceId).finally(() => setSpeakingMsgId(null));
-    }, [messages, resolveSpeaker, resolveVoiceId, shouldAutoPlay, speak]);
+    }, [isLiveCampaign, messages, resolveSpeaker, resolveVoiceId, shouldAutoPlay, speak]);
+
+    const handleSkipPresentation = useCallback(() => {
+        if (!isLiveCampaign) return;
+
+        const pendingIds = new Set<string>();
+        if (activePresentationMessageId) {
+            pendingIds.add(activePresentationMessageId);
+        }
+        for (const queuedId of presentationQueueRef.current) {
+            pendingIds.add(queuedId);
+        }
+        if (pendingIds.size === 0) return;
+
+        presentationQueueRef.current = [];
+        queuedPresentationIdsRef.current.clear();
+
+        setSkippedTypewriterMessageIds((prev) => {
+            const next = new Set(prev);
+            pendingIds.forEach((id) => next.add(id));
+            return next;
+        });
+        setRevealedPresentationIds((prev) => {
+            const next = new Set(prev);
+            pendingIds.forEach((id) => next.add(id));
+            return next;
+        });
+
+        typewriterResolversRef.current.forEach((resolve) => resolve());
+        typewriterResolversRef.current.clear();
+
+        stop();
+        setSpeakingMsgId(null);
+        setIsPresentingQueue(false);
+        setActivePresentationMessageId(null);
+    }, [activePresentationMessageId, isLiveCampaign, stop]);
+
+    const isInputLocked = isProcessing;
 
     const handleSend = (text?: string) => {
         const msg = text || input;
-        if (!msg.trim() || isProcessing) return;
+        if (!msg.trim() || isInputLocked) return;
+        if (isPresentingQueue) {
+            handleSkipPresentation();
+        }
         onSendMessage(msg);
         setInput("");
         if (textareaRef.current) {
@@ -242,50 +434,89 @@ export function ChatInterface({
             <div className="flex-1 overflow-y-auto w-full custom-scrollbar scroll-smooth" ref={scrollRef}>
                 <div className="w-full max-w-3xl mx-auto py-8 px-4 flex flex-col gap-6">
                     {messages.length === 0 ? (
-                        /* Agent Identity Landing Page */
                         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center gap-6 animate-in fade-in duration-500 pt-12">
-                            {/* Agent Avatar */}
-                            <motion.div
-                                initial={{ scale: 0.8, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                                className="w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-lg ring-2 ring-white/10"
-                                style={{ background: personality.gradient }}
-                            >
-                                <span>{personality.emoji}</span>
-                            </motion.div>
+                            {showDefaultAgentLanding ? (
+                                <>
+                                    <motion.div
+                                        initial={{ scale: 0.85, opacity: 0 }}
+                                        animate={{ scale: 1, opacity: 1 }}
+                                        transition={{ type: "spring", stiffness: 190, damping: 15 }}
+                                        className="w-24 h-24 bg-[#2f2f2f] rounded-full flex items-center justify-center shadow-2xl ring-1 ring-white/10"
+                                    >
+                                        <motion.div
+                                            animate={{ rotate: [0, -8, 8, -4, 4, 0], y: [0, -2, 0] }}
+                                            transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+                                        >
+                                            <Cat size={48} className="text-[#ececec]" />
+                                        </motion.div>
+                                    </motion.div>
 
-                            {/* Agent Name & Role */}
-                            <motion.div
-                                initial={{ y: 10, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                transition={{ delay: 0.1 }}
-                                className="space-y-2"
-                            >
-                                <h2 className="text-2xl font-semibold text-white">{agent.name}</h2>
-                                <p className="text-sm text-[#8e8ea0]">{agent.role}</p>
-                            </motion.div>
+                                    <motion.div
+                                        initial={{ y: 10, opacity: 0 }}
+                                        animate={{ y: 0, opacity: 1 }}
+                                        transition={{ delay: 0.1 }}
+                                        className="space-y-2"
+                                    >
+                                        <h2 className="text-2xl font-semibold text-white">{agent.name}</h2>
+                                        <p className="text-sm text-[#8e8ea0]">Start a chat.</p>
+                                    </motion.div>
+                                </>
+                            ) : (
+                                <>
+                                    <motion.div
+                                        initial={{ scale: 0.8, opacity: 0 }}
+                                        animate={{ scale: 1, opacity: 1 }}
+                                        transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                                        className="w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-lg ring-2 ring-white/10"
+                                        style={{ background: personality.gradient }}
+                                    >
+                                        <span>{personality.emoji}</span>
+                                    </motion.div>
 
-                            {/* System Prompt Preview */}
-                            {agent.systemPrompt && (
-                                <motion.p
-                                    initial={{ y: 10, opacity: 0 }}
-                                    animate={{ y: 0, opacity: 1 }}
-                                    transition={{ delay: 0.2 }}
-                                    className="text-sm text-[#b4b4b4] max-w-md leading-relaxed"
-                                >
-                                    {agent.systemPrompt.length > 120
-                                        ? agent.systemPrompt.substring(0, 120) + "..."
-                                        : agent.systemPrompt}
-                                </motion.p>
+                                    <motion.div
+                                        initial={{ y: 10, opacity: 0 }}
+                                        animate={{ y: 0, opacity: 1 }}
+                                        transition={{ delay: 0.1 }}
+                                        className="space-y-2"
+                                    >
+                                        <h2 className="text-2xl font-semibold text-white">{agent.name}</h2>
+                                        <p className="text-sm text-[#8e8ea0]">{agent.role}</p>
+                                    </motion.div>
+
+                                    {agent.systemPrompt && (
+                                        <motion.p
+                                            initial={{ y: 10, opacity: 0 }}
+                                            animate={{ y: 0, opacity: 1 }}
+                                            transition={{ delay: 0.2 }}
+                                            className="text-sm text-[#b4b4b4] max-w-md leading-relaxed"
+                                        >
+                                            {agent.systemPrompt.length > 120
+                                                ? agent.systemPrompt.substring(0, 120) + "..."
+                                                : agent.systemPrompt}
+                                        </motion.p>
+                                    )}
+                                </>
                             )}
                         </div>
                     ) : (
                         <AnimatePresence initial={false}>
-                            {messages.map((msg) => {
+                            {messages.map((msg, msgIndex) => {
+                                const hasPreviousUserMessage = msgIndex > 0
+                                    && messages.slice(0, msgIndex).some((candidate) => candidate.role === "user");
+                                const canRegenerateError = Boolean(
+                                    onRegenerateFromError
+                                    && msg.role === "system"
+                                    && msg.error
+                                    && msgIndex === messages.length - 1
+                                    && hasPreviousUserMessage,
+                                );
                                 const speaker = resolveSpeaker(msg);
+                                const isSequencedMessage = shouldSequencePresentation(msg, speaker);
+                                const isVisible = !isSequencedMessage || revealedPresentationIds.has(msg.id);
+                                if (!isVisible) return null;
+
                                 const messagePersonality = getAgentPersonality(speaker);
-                                const typewriterEnabled = shouldTypewriter(msg, speaker);
+                                const typewriterEnabled = shouldTypewriter(msg, speaker) && !skippedTypewriterMessageIds.has(msg.id);
 
                                 return (
                                     <motion.div
@@ -320,8 +551,25 @@ export function ChatInterface({
                                                 )}
 
                                                 <div className="prose prose-invert prose-p:leading-7 prose-pre:bg-black/50 prose-pre:border prose-pre:border-white/10 prose-pre:p-4 prose-pre:rounded-lg max-w-none break-words [&_p]:!my-0 [&_*:first-child]:!mt-0 [&_*:last-child]:!mb-0">
-                                                    <TypewriterContent text={msg.content} enabled={typewriterEnabled} />
+                                                    <TypewriterContent
+                                                        text={msg.content}
+                                                        enabled={typewriterEnabled}
+                                                        onComplete={() => resolveTypewriterPresentation(msg.id)}
+                                                    />
                                                 </div>
+
+                                                {isPresentingQueue && activePresentationMessageId === msg.id && (
+                                                    <div className="mt-2">
+                                                        <button
+                                                            onClick={handleSkipPresentation}
+                                                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-[#ececec] bg-[#2f2f2f] hover:bg-[#3a3a3a] border border-white/10 transition-colors"
+                                                            title="Skip current playback and reveal queued turns"
+                                                        >
+                                                            <SkipForward size={12} />
+                                                            Skip
+                                                        </button>
+                                                    </div>
+                                                )}
 
                                                 {/* TTS Button (assistant messages only) */}
                                                 {msg.role === "assistant" && (
@@ -343,6 +591,22 @@ export function ChatInterface({
                                                         </button>
                                                     </div>
                                                 )}
+
+                                                {canRegenerateError && (
+                                                    <div className="mt-2 flex items-center gap-1">
+                                                        <button
+                                                            onClick={() => {
+                                                                if (!onRegenerateFromError) return;
+                                                                void onRegenerateFromError(msg.id);
+                                                            }}
+                                                            disabled={isInputLocked}
+                                                            className={`p-1.5 rounded-md transition-all text-[#8e8ea0] hover:text-[#ececec] hover:bg-[#2f2f2f] ${isInputLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                                                            title="Regenerate response"
+                                                        >
+                                                            <RotateCcw size={14} />
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </motion.div>
@@ -352,7 +616,7 @@ export function ChatInterface({
                     )}
 
                     {/* Typing Indicator */}
-                    {isProcessing && (
+                    {(isProcessing || isPresentingQueue) && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
@@ -415,17 +679,18 @@ export function ChatInterface({
                             placeholder={
                                 isRecording ? "🎙️ Listening..." :
                                     isTranscribing ? "⏳ Transcribing..." :
+                                        isPresentingQueue ? "🔊 Playing squad turn..." :
                                         `Message ${agent.name}...`
                             }
                             rows={1}
                             className="flex-1 max-h-52 min-h-[24px] bg-transparent text-[#ececec] placeholder:text-[#b4b4b4] focus:outline-none resize-none py-3 text-[16px] leading-[24px]"
-                            disabled={isProcessing || isRecording || isTranscribing}
+                            disabled={isInputLocked || isRecording || isTranscribing}
                         />
 
                         {/* Mic Button */}
                         <button
                             onClick={handleMicClick}
-                            disabled={isProcessing || isTranscribing}
+                            disabled={isInputLocked || isTranscribing}
                             className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${
                                 isRecording
                                     ? "bg-red-500/20 text-red-400 animate-pulse hover:bg-red-500/30"
@@ -447,7 +712,7 @@ export function ChatInterface({
                         {/* Send Button */}
                         <button
                             onClick={() => handleSend()}
-                            disabled={!input.trim() || isProcessing}
+                            disabled={!input.trim() || isInputLocked}
                             className={`p-2 ml-1 rounded-full transition-all duration-200 self-end mb-1 ${
                                 input.trim()
                                     ? "bg-[#ececec] text-black hover:bg-white"

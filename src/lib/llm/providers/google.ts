@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { LLMChatOptions, LLMClient, LLMMessage, LLMResponse } from "../types";
 import { LLMProvider, ProviderConfig } from "../providerTypes";
+import { supportsGoogleThinking } from "../modelCatalog";
 
 const GOOGLE_MODELS = [
     { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", description: "Mid-size multimodal" },
@@ -8,7 +9,66 @@ const GOOGLE_MODELS = [
     { id: "gemini-pro", label: "Gemini 1.0 Pro", description: "Legacy Pro" },
 ];
 
+const GOOGLE_THINKING_BUDGET_BY_EFFORT = {
+    low: 256,
+    medium: 1024,
+    high: 4096,
+} as const;
+
+type JsonSchemaRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toGoogleSchema(rawSchema: unknown): JsonSchemaRecord | undefined {
+    if (!isRecord(rawSchema)) return undefined;
+
+    const type = typeof rawSchema.type === "string" ? rawSchema.type : undefined;
+    const schema: JsonSchemaRecord = {};
+
+    if (type) {
+        schema.type = type;
+    }
+    if (typeof rawSchema.description === "string") {
+        schema.description = rawSchema.description;
+    }
+
+    const enumValues = Array.isArray(rawSchema.enum) ? rawSchema.enum : undefined;
+    if (enumValues && enumValues.length > 0) {
+        schema.enum = enumValues;
+        if (type === "string") {
+            schema.format = "enum";
+        }
+    }
+
+    if (type === "object") {
+        const rawProperties = isRecord(rawSchema.properties) ? rawSchema.properties : {};
+        const convertedProperties: Record<string, unknown> = {};
+        for (const [key, nestedRawSchema] of Object.entries(rawProperties)) {
+            const converted = toGoogleSchema(nestedRawSchema);
+            if (converted) {
+                convertedProperties[key] = converted;
+            }
+        }
+        schema.properties = convertedProperties;
+        if (Array.isArray(rawSchema.required)) {
+            schema.required = rawSchema.required.filter((entry): entry is string => typeof entry === "string");
+        }
+    } else if (type === "array") {
+        const convertedItems = toGoogleSchema(rawSchema.items);
+        if (convertedItems) {
+            schema.items = convertedItems;
+        } else {
+            schema.items = { type: "string" };
+        }
+    }
+
+    return schema;
+}
+
 class GoogleClient implements LLMClient {
+    public readonly supportsNativeToolCalling = true;
     private client: GoogleGenerativeAI;
     private model: string;
 
@@ -20,50 +80,74 @@ class GoogleClient implements LLMClient {
     async chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse> {
         try {
             const model = this.client.getGenerativeModel({ model: this.model });
-
-            // Convert messages to Gemini format
-            const chatHistory = messages.map(m => ({
-                role: m.role === "assistant" ? "model" : "user",
-                parts: [{ text: m.content }],
-            }));
-
-            // Gemini handles system instruction via model config or separate param
-            // For simple chat, we can just start a chat session.
-            // Note: System prompt is better handled by 'systemInstruction' in newer SDKs, 
-            // but for simplicity in this standard chat loop we'll try to prepend or use it if available.
-
             const systemMessage = messages.find(m => m.role === "system");
-            const history = messages.filter(m => m.role !== "system").map(m => ({
-                role: m.role === "assistant" ? "model" : "user",
-                parts: [{ text: m.content }],
+            const contents = messages
+                .filter(m => m.role !== "system")
+                .map((m) => ({
+                    role: m.role === "assistant" ? "model" : "user",
+                    parts: [{ text: m.content }],
+                }));
+            if (contents.length === 0) {
+                throw new Error("No messages to send");
+            }
+
+            const generationConfig: Record<string, unknown> = {
+                maxOutputTokens: options?.max_tokens ?? 4096,
+                temperature: options?.temperature ?? 0.7,
+            };
+
+            if (options?.reasoningEffort && options.reasoningEffort !== "none" && supportsGoogleThinking(this.model)) {
+                generationConfig.thinkingConfig = {
+                    thinkingBudget: GOOGLE_THINKING_BUDGET_BY_EFFORT[options.reasoningEffort],
+                };
+            }
+
+            const tools = options?.tools && options.tools.length > 0
+                ? [{
+                    functionDeclarations: options.tools.map((tool) => ({
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: toGoogleSchema(tool.inputSchema),
+                    })),
+                }]
+                : undefined;
+
+            const toolConfig = tools
+                ? {
+                    functionCallingConfig: {
+                        mode: options?.toolChoice === "none" ? "NONE" : "AUTO",
+                    },
+                }
+                : undefined;
+
+            const requestPayload = {
+                contents,
+                generationConfig,
+                tools,
+                toolConfig,
+                systemInstruction: systemMessage ? systemMessage.content : undefined,
+            } as unknown as Parameters<typeof model.generateContent>[0];
+
+            const result = await model.generateContent(requestPayload);
+            const response = result.response;
+
+            const toolCalls = response.functionCalls?.()?.map((call) => ({
+                name: call.name,
+                argumentsText: JSON.stringify(call.args ?? {}),
             }));
 
-            // Currently, simple chat with history:
-            // We use the last message as the prompt and the rest as history.
-            // However, the `chat` method expects a full array in our interface.
-
-            // To properly use Gemini chat, we should start a chat with history.
-            // Let's grab the last user message.
-            const lastMsg = history.pop();
-            if (!lastMsg) throw new Error("No messages to send");
-
-            const chat = model.startChat({
-                history: history,
-                generationConfig: {
-                    maxOutputTokens: options?.max_tokens,
-                    temperature: options?.temperature,
-                },
-                systemInstruction: systemMessage ? systemMessage.content : undefined,
-            });
-
-            const result = await chat.sendMessage(lastMsg.parts[0].text);
-            const response = result.response;
-            const text = response.text();
+            let text = "";
+            try {
+                text = response.text();
+            } catch {
+                text = "";
+            }
 
             return {
                 content: text,
+                toolCalls,
                 usage: {
-                    total_tokens: 0, // Gemini doesn't always return simple token counts in the same way
+                    total_tokens: response.usageMetadata?.totalTokenCount || 0,
                 },
             };
         } catch (error) {
