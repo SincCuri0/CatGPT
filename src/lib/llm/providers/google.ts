@@ -16,9 +16,21 @@ const GOOGLE_THINKING_BUDGET_BY_EFFORT = {
 } as const;
 
 type JsonSchemaRecord = Record<string, unknown>;
+type GeminiPart = { text?: string; functionCall?: { name: string; args: Record<string, unknown> }; functionResponse?: { name: string; response: Record<string, unknown> } };
+type GeminiContent = { role: "user" | "model"; parts: GeminiPart[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeParseToolArgs(raw: string): Record<string, unknown> {
+    if (!raw.trim()) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return isRecord(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
 }
 
 function toGoogleSchema(rawSchema: unknown): JsonSchemaRecord | undefined {
@@ -67,6 +79,71 @@ function toGoogleSchema(rawSchema: unknown): JsonSchemaRecord | undefined {
     return schema;
 }
 
+function toGooglePayload(messages: LLMMessage[]): {
+    systemInstruction?: string;
+    contents: GeminiContent[];
+} {
+    const systemMessages: string[] = [];
+    const contents: GeminiContent[] = [];
+
+    for (const message of messages) {
+        if (message.role === "system") {
+            if (message.content.trim().length > 0) {
+                systemMessages.push(message.content);
+            }
+            continue;
+        }
+
+        if (message.role === "user") {
+            contents.push({
+                role: "user",
+                parts: [{ text: message.content }],
+            });
+            continue;
+        }
+
+        if (message.role === "assistant") {
+            const parts: GeminiPart[] = [];
+            if (message.content.trim().length > 0) {
+                parts.push({ text: message.content });
+            }
+
+            if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+                for (const toolCall of message.toolCalls) {
+                    parts.push({
+                        functionCall: {
+                            name: toolCall.name,
+                            args: safeParseToolArgs(toolCall.argumentsText),
+                        },
+                    });
+                }
+            }
+
+            if (parts.length > 0) {
+                contents.push({ role: "model", parts });
+            }
+            continue;
+        }
+
+        contents.push({
+            role: "user",
+            parts: [{
+                functionResponse: {
+                    name: message.name || "tool",
+                    response: {
+                        result: message.content,
+                    },
+                },
+            }],
+        });
+    }
+
+    return {
+        systemInstruction: systemMessages.length > 0 ? systemMessages.join("\n\n") : undefined,
+        contents,
+    };
+}
+
 class GoogleClient implements LLMClient {
     public readonly supportsNativeToolCalling = true;
     private client: GoogleGenerativeAI;
@@ -80,14 +157,9 @@ class GoogleClient implements LLMClient {
     async chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse> {
         try {
             const model = this.client.getGenerativeModel({ model: this.model });
-            const systemMessage = messages.find(m => m.role === "system");
-            const contents = messages
-                .filter(m => m.role !== "system")
-                .map((m) => ({
-                    role: m.role === "assistant" ? "model" : "user",
-                    parts: [{ text: m.content }],
-                }));
-            if (contents.length === 0) {
+            const payload = toGooglePayload(messages);
+
+            if (payload.contents.length === 0) {
                 throw new Error("No messages to send");
             }
 
@@ -121,17 +193,18 @@ class GoogleClient implements LLMClient {
                 : undefined;
 
             const requestPayload = {
-                contents,
+                contents: payload.contents,
                 generationConfig,
                 tools,
                 toolConfig,
-                systemInstruction: systemMessage ? systemMessage.content : undefined,
+                systemInstruction: payload.systemInstruction,
             } as unknown as Parameters<typeof model.generateContent>[0];
 
             const result = await model.generateContent(requestPayload);
             const response = result.response;
 
-            const toolCalls = response.functionCalls?.()?.map((call) => ({
+            const toolCalls = response.functionCalls?.()?.map((call, index) => ({
+                id: `tool_call_${index + 1}`,
                 name: call.name,
                 argumentsText: JSON.stringify(call.args ?? {}),
             }));

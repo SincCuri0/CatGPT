@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AgentConfig } from "@/lib/core/Agent";
+import { AccessPermissionMode, AgentConfig } from "@/lib/core/Agent";
 import {
     SquadConfig,
     SquadInteractionMode,
@@ -22,12 +22,30 @@ interface SquadEditorProps {
     onCancel: () => void;
 }
 
+const ACCESS_PERMISSION_OPTIONS: Array<{
+    id: AccessPermissionMode;
+    label: string;
+    desc: string;
+}> = [
+    {
+        id: "ask_always",
+        label: "Ask Always",
+        desc: "Prompt before write-file or shell commands each message.",
+    },
+    {
+        id: "full_access",
+        label: "Full Access",
+        desc: "Allow write-file and shell commands without prompting.",
+    },
+];
+
 function createDefaultSquad(): SquadConfig {
     return normalizeSquadConfig({
         name: "",
         goal: "",
         context: "",
         members: [],
+        accessMode: "ask_always",
     });
 }
 
@@ -236,6 +254,37 @@ export function SquadEditor({
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
                             />
                         </div>
+
+                        <div className="space-y-1.5">
+                            <label className="text-sm font-semibold text-slate-300">Access Permissions</label>
+                            <p className="text-xs text-slate-500">
+                                Controls whether squad workers can run write-file and shell tools without per-message approval.
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {ACCESS_PERMISSION_OPTIONS.map((option) => {
+                                    const isSelected = (formData.accessMode || "ask_always") === option.id;
+                                    return (
+                                        <button
+                                            key={option.id}
+                                            type="button"
+                                            onClick={() => setFormData((prev) => ({ ...prev, accessMode: option.id }))}
+                                            className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                                                isSelected
+                                                    ? "border-purple-500/60 bg-purple-500/10 ring-1 ring-purple-500/40"
+                                                    : "border-slate-800 bg-slate-950 hover:border-slate-700"
+                                            }`}
+                                        >
+                                            <div className={`text-sm font-semibold ${isSelected ? "text-purple-100" : "text-slate-200"}`}>
+                                                {option.label}
+                                            </div>
+                                            <div className="text-[11px] text-slate-500 mt-1">
+                                                {option.desc}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
                 )}
 
@@ -249,7 +298,7 @@ export function SquadEditor({
                                         Create Squad Cats
                                     </div>
                                     <div className="text-xs text-slate-500 mt-0.5">
-                                        Same natural-language flow as <code>/create_cats</code>, but scoped to squad-only agents.
+                                        Same natural-language flow as <code>/create_squad</code> (and <code>/create_cats</code>), but scoped to squad-only agents.
                                     </div>
                                 </div>
                             </div>

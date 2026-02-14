@@ -372,6 +372,16 @@ function isExplicitReasoningUnsupported(details: string): boolean {
         || normalized.includes("unrecognized");
 }
 
+function isExplicitToolUseUnsupported(details: string): boolean {
+    const normalized = details.toLowerCase();
+    if (!(normalized.includes("tool") || normalized.includes("function"))) return false;
+    return normalized.includes("not supported")
+        || normalized.includes("unsupported")
+        || normalized.includes("does not support")
+        || normalized.includes("invalid")
+        || normalized.includes("unrecognized");
+}
+
 async function probeOpenAICompatibleModel(
     endpointBase: string,
     apiKey: string,
@@ -396,6 +406,46 @@ async function probeOpenAICompatibleModel(
         return { chat: false, reasoning: false };
     }
 
+    let nativeTools: boolean | undefined;
+    const toolUseResponse = await fetchWithTimeout(`${endpointBase}/chat/completions`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: modelId,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+            temperature: 0,
+            tools: [{
+                type: "function",
+                function: {
+                    name: "ping_tool_probe",
+                    description: "Capability probe tool.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            ok: { type: "boolean" },
+                        },
+                    },
+                },
+            }],
+            tool_choice: "auto",
+        }),
+    });
+
+    if (!toolUseResponse.ok) {
+        if (!isTransientProbeStatus(toolUseResponse.status)) {
+            const details = (await toolUseResponse.text()).trim();
+            if (isExplicitToolUseUnsupported(details)) {
+                nativeTools = false;
+            }
+        }
+    } else {
+        nativeTools = true;
+    }
+
     const reasoningResponse = await fetchWithTimeout(`${endpointBase}/chat/completions`, {
         method: "POST",
         headers: {
@@ -413,16 +463,24 @@ async function probeOpenAICompatibleModel(
 
     if (!reasoningResponse.ok) {
         if (isTransientProbeStatus(reasoningResponse.status)) {
-            return { chat: true };
+            return typeof nativeTools === "boolean"
+                ? { chat: true, nativeTools }
+                : { chat: true };
         }
         const details = (await reasoningResponse.text()).trim();
         if (isExplicitReasoningUnsupported(details)) {
-            return { chat: true, reasoning: false };
+            return typeof nativeTools === "boolean"
+                ? { chat: true, reasoning: false, nativeTools }
+                : { chat: true, reasoning: false };
         }
-        return { chat: true };
+        return typeof nativeTools === "boolean"
+            ? { chat: true, nativeTools }
+            : { chat: true };
     }
 
-    return { chat: true, reasoning: true };
+    return typeof nativeTools === "boolean"
+        ? { chat: true, reasoning: true, nativeTools }
+        : { chat: true, reasoning: true };
 }
 
 async function probeAnthropicModel(apiKey: string, modelId: string): Promise<Partial<ModelCapabilities> | null> {

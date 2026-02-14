@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.74.0",
     "@elevenlabs/elevenlabs-js": "^2.35.0",
     "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/uuid": "^10.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

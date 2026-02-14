@@ -1,4 +1,4 @@
-import { AgentConfig, AgentStyle } from "./Agent";
+import { AccessPermissionMode, AgentConfig, AgentStyle } from "./Agent";
 import { isKnownDeprecatedModel } from "../llm/modelCatalog";
 
 export type SquadInteractionMode = "master_log" | "live_campaign";
@@ -40,7 +40,7 @@ export const DEFAULT_SQUAD_INTERACTION = MASTER_LOG_INTERACTION_DEFAULTS;
 export const DEFAULT_SQUAD_ORCHESTRATOR_PROFILE: SquadOrchestratorProfile = {
     name: "OR",
     provider: "groq",
-    model: "llama-3.3-70b-versatile",
+    model: "gpt-oss-20b",
     style: "assistant",
     voiceId: "en-US-ChristopherNeural",
 };
@@ -54,6 +54,7 @@ export interface SquadConfig {
     mission?: string;
     members: string[];
     maxIterations?: number;
+    accessMode?: AccessPermissionMode;
     orchestrator?: Partial<SquadOrchestratorProfile>;
     interaction?: Partial<SquadInteractionConfig>;
 }
@@ -113,6 +114,14 @@ function normalizeBoolean(input: unknown, fallback: boolean): boolean {
 
 function sanitizeText(input: unknown): string {
     return typeof input === "string" ? input.trim() : "";
+}
+
+function isGroqStrictOrchestratorModel(modelId: string): boolean {
+    const normalized = modelId.trim().toLowerCase();
+    return normalized === "gpt-oss-20b"
+        || normalized === "gpt-oss-120b"
+        || normalized === "openai/gpt-oss-20b"
+        || normalized === "openai/gpt-oss-120b";
 }
 
 function normalizeStyle(input: unknown): AgentStyle | null {
@@ -179,10 +188,13 @@ export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
     const orchestrator = config.orchestrator ?? {};
     const orchestratorProvider = sanitizeText(orchestrator.provider) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider;
     const requestedOrchestratorModel = sanitizeText(orchestrator.model);
-    const orchestratorModel = requestedOrchestratorModel
+    const baseOrchestratorModel = requestedOrchestratorModel
         && !isKnownDeprecatedModel(orchestratorProvider, requestedOrchestratorModel)
         ? requestedOrchestratorModel
         : DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.model;
+    const orchestratorModel = orchestratorProvider === "groq"
+        ? (isGroqStrictOrchestratorModel(baseOrchestratorModel) ? baseOrchestratorModel : DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.model)
+        : baseOrchestratorModel;
 
     return {
         ...config,
@@ -191,6 +203,7 @@ export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
         context,
         members: effectiveMembers,
         maxIterations: safeMaxIterations,
+        accessMode: config.accessMode === "full_access" ? "full_access" : "ask_always",
         orchestrator: {
             name: sanitizeText(orchestrator.name) || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.name,
             provider: orchestratorProvider,

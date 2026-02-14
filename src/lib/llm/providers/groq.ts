@@ -50,6 +50,14 @@ function safeJsonParse<T>(raw: string): T | null {
     }
 }
 
+function safeParseToolArgs(raw: string): Record<string, unknown> {
+    const parsed = safeJsonParse<unknown>(raw);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+    }
+    return {};
+}
+
 function escapeControlCharsInsideStrings(raw: string): string {
     let output = "";
     let inString = false;
@@ -194,7 +202,39 @@ function normalizeArgumentsText(rawArguments: unknown): string {
     return JSON.stringify(rawArguments);
 }
 
-function parseToolCallObject(raw: unknown): { name: string; argumentsText: string } | null {
+function toGroqMessages(messages: LLMMessage[]): ChatCompletionCreateParamsNonStreaming["messages"] {
+    return messages.map((message) => {
+        if (message.role === "tool") {
+            return {
+                role: "tool",
+                content: message.content,
+                tool_call_id: message.toolCallId || "unknown_tool_call",
+            };
+        }
+
+        if (message.role === "assistant" && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+            return {
+                role: "assistant",
+                content: message.content || null,
+                tool_calls: message.toolCalls.map((toolCall) => ({
+                    id: toolCall.id,
+                    type: "function" as const,
+                    function: {
+                        name: toolCall.name,
+                        arguments: toolCall.argumentsText,
+                    },
+                })),
+            };
+        }
+
+        return {
+            role: message.role,
+            content: message.content,
+        };
+    }) as ChatCompletionCreateParamsNonStreaming["messages"];
+}
+
+function parseToolCallObject(raw: unknown): { id: string; name: string; argumentsText: string } | null {
     if (!isRecord(raw)) return null;
 
     const nestedFunction = isRecord(raw.function) ? raw.function : null;
@@ -209,7 +249,13 @@ function parseToolCallObject(raw: unknown): { name: string; argumentsText: strin
         ?? raw.input
         ?? nestedFunction?.arguments
         ?? {};
+
+    const id = typeof raw.id === "string" && raw.id.trim().length > 0
+        ? raw.id.trim()
+        : `tool_call_recovered_${resolvedName}`;
+
     return {
+        id,
         name: resolvedName,
         argumentsText: normalizeArgumentsText(rawArguments),
     };
@@ -266,13 +312,14 @@ function extractGroqErrorDetails(error: unknown): { code: string | null; failedG
     };
 }
 
-function parseFailedGenerationToolCall(failedGeneration: string): { name: string; argumentsText: string } | null {
+function parseFailedGenerationToolCall(failedGeneration: string): { id: string; name: string; argumentsText: string } | null {
     const wrapperMatch = failedGeneration.match(/<function=([a-zA-Z0-9_-]+)\s*([\s\S]*?)\s*<\/function>/i);
     if (wrapperMatch) {
         const toolName = wrapperMatch[1]?.trim();
         const wrappedArguments = wrapperMatch[2]?.trim();
         if (toolName) {
             return {
+                id: `tool_call_recovered_${toolName}`,
                 name: toolName,
                 argumentsText: normalizeArgumentsText(wrappedArguments),
             };
@@ -306,8 +353,10 @@ function parseFailedGenerationToolCall(failedGeneration: string): { name: string
 
     const rawNameMatch = failedGeneration.match(/"name"\s*:\s*"([^"]+)"/i);
     if (rawNameMatch?.[1]) {
+        const toolName = rawNameMatch[1].trim();
         return {
-            name: rawNameMatch[1].trim(),
+            id: `tool_call_recovered_${toolName}`,
+            name: toolName,
             argumentsText: "{}",
         };
     }
@@ -315,7 +364,7 @@ function parseFailedGenerationToolCall(failedGeneration: string): { name: string
     return null;
 }
 
-function parseFailedGenerationToolCallLegacy(failedGeneration: string): { name: string; argumentsText: string } | null {
+function parseFailedGenerationToolCallLegacy(failedGeneration: string): { id: string; name: string; argumentsText: string } | null {
     const match = failedGeneration.match(/<function=([a-zA-Z0-9_-]+)\s*({[\s\S]*?})\s*<\/function>/i);
     if (!match) return null;
 
@@ -327,23 +376,26 @@ function parseFailedGenerationToolCallLegacy(failedGeneration: string): { name: 
         const parsed = safeJsonParseWithRecovery<Record<string, unknown>>(rawArgs);
         if (!parsed) {
             return {
+                id: `tool_call_recovered_${toolName}`,
                 name: toolName,
                 argumentsText: "{}",
             };
         }
         return {
+            id: `tool_call_recovered_${toolName}`,
             name: toolName,
             argumentsText: JSON.stringify(parsed),
         };
     } catch {
         return {
+            id: `tool_call_recovered_${toolName}`,
             name: toolName,
             argumentsText: "{}",
         };
     }
 }
 
-function parseFailedGenerationToolCallCompat(failedGeneration: string): { name: string; argumentsText: string } | null {
+function parseFailedGenerationToolCallCompat(failedGeneration: string): { id: string; name: string; argumentsText: string } | null {
     return parseFailedGenerationToolCall(failedGeneration)
         ?? parseFailedGenerationToolCallLegacy(failedGeneration);
 }
@@ -395,7 +447,7 @@ export class GroqClient implements LLMClient {
 
     private buildRequestPayload(messages: LLMMessage[], options?: LLMChatOptions): ChatCompletionCreateParamsNonStreaming {
         const requestPayload: ChatCompletionCreateParamsNonStreaming = {
-            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            messages: toGroqMessages(messages),
             model: this.model,
             temperature: options?.temperature ?? 0.7,
             max_tokens: options?.max_tokens ?? 4096,
@@ -412,6 +464,19 @@ export class GroqClient implements LLMClient {
 
         if (options?.reasoningEffort && options.reasoningEffort !== "none" && supportsGroqReasoningEffort(this.model)) {
             requestPayload.reasoning_effort = mapGroqReasoningEffort(this.model, options.reasoningEffort);
+        }
+
+        if (options?.responseFormat) {
+            (requestPayload as unknown as { response_format?: unknown }).response_format = options.responseFormat.type === "json_schema"
+                ? {
+                    type: "json_schema",
+                    json_schema: {
+                        name: options.responseFormat.json_schema.name,
+                        schema: options.responseFormat.json_schema.schema,
+                        strict: options.responseFormat.json_schema.strict === true,
+                    },
+                }
+                : { type: "json_object" };
         }
 
         return requestPayload;
@@ -484,10 +549,10 @@ export class GroqClient implements LLMClient {
             const message = completion.choices[0]?.message;
             const toolCalls = message?.tool_calls
                 ?.filter((toolCall) => toolCall.type === "function")
-                .map((toolCall) => ({
-                    id: toolCall.id,
+                .map((toolCall, index) => ({
+                    id: toolCall.id || `tool_call_${index + 1}`,
                     name: toolCall.function.name,
-                    argumentsText: toolCall.function.arguments,
+                    argumentsText: JSON.stringify(safeParseToolArgs(toolCall.function.arguments || "{}")),
                 }));
 
             return {
@@ -535,7 +600,7 @@ export class GroqClient implements LLMClient {
                 // Last-resort fallback: retry once without tools to avoid failing the whole turn.
                 try {
                     const fallbackPayload: ChatCompletionCreateParamsNonStreaming = {
-                        messages: messages.map(m => ({ role: m.role, content: m.content })),
+                        messages: toGroqMessages(messages).filter((message) => message.role !== "tool"),
                         model: this.model,
                         temperature: options?.temperature ?? 0.7,
                         max_tokens: options?.max_tokens ?? 4096,

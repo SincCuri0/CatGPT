@@ -15,6 +15,90 @@ const THINKING_BUDGET_BY_EFFORT = {
     high: 2048,
 } as const;
 
+function safeParseToolArgs(raw: string): Record<string, unknown> {
+    if (!raw.trim()) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed))
+            ? parsed as Record<string, unknown>
+            : {};
+    } catch {
+        return {};
+    }
+}
+
+function toAnthropicPayload(messages: LLMMessage[]): {
+    system?: string;
+    messages: Anthropic.MessageCreateParamsNonStreaming["messages"];
+} {
+    const systemParts: string[] = [];
+    const payloadMessages: Anthropic.MessageCreateParamsNonStreaming["messages"] = [];
+
+    for (const message of messages) {
+        if (message.role === "system") {
+            if (message.content.trim().length > 0) {
+                systemParts.push(message.content);
+            }
+            continue;
+        }
+
+        if (message.role === "user") {
+            payloadMessages.push({
+                role: "user",
+                content: message.content,
+            });
+            continue;
+        }
+
+        if (message.role === "assistant") {
+            if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+                const blocks: Anthropic.ContentBlockParam[] = [];
+                if (message.content.trim().length > 0) {
+                    blocks.push({
+                        type: "text",
+                        text: message.content,
+                    });
+                }
+
+                for (const toolCall of message.toolCalls) {
+                    blocks.push({
+                        type: "tool_use",
+                        id: toolCall.id,
+                        name: toolCall.name,
+                        input: safeParseToolArgs(toolCall.argumentsText),
+                    });
+                }
+
+                payloadMessages.push({
+                    role: "assistant",
+                    content: blocks,
+                });
+                continue;
+            }
+
+            payloadMessages.push({
+                role: "assistant",
+                content: message.content,
+            });
+            continue;
+        }
+
+        payloadMessages.push({
+            role: "user",
+            content: [{
+                type: "tool_result",
+                tool_use_id: message.toolCallId || "unknown_tool_call",
+                content: message.content,
+            }],
+        });
+    }
+
+    return {
+        system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
+        messages: payloadMessages,
+    };
+}
+
 class AnthropicClient implements LLMClient {
     public readonly supportsNativeToolCalling = true;
     private client: Anthropic;
@@ -27,16 +111,12 @@ class AnthropicClient implements LLMClient {
 
     async chat(messages: LLMMessage[], options?: LLMChatOptions): Promise<LLMResponse> {
         try {
-            const systemMessage = messages.find(m => m.role === "system");
-            const userAssistantMessages = messages.filter(m => m.role !== "system").map(m => ({
-                role: m.role as "user" | "assistant",
-                content: m.content,
-            }));
+            const anthropicPayload = toAnthropicPayload(messages);
 
             const requestPayload: Anthropic.MessageCreateParamsNonStreaming = {
                 model: this.model,
-                system: systemMessage?.content,
-                messages: userAssistantMessages,
+                system: anthropicPayload.system,
+                messages: anthropicPayload.messages,
                 temperature: options?.temperature ?? 0.7,
                 max_tokens: options?.max_tokens ?? 4096,
             };
@@ -70,8 +150,8 @@ class AnthropicClient implements LLMClient {
 
             const toolCalls = response.content
                 .filter((block) => block.type === "tool_use")
-                .map((block) => ({
-                    id: block.id,
+                .map((block, index) => ({
+                    id: block.id || `tool_call_${index + 1}`,
                     name: block.name,
                     argumentsText: JSON.stringify(block.input ?? {}),
                 }));

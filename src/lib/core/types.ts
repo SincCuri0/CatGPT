@@ -50,6 +50,13 @@ export interface ToolExecutionContext {
     providerId?: string;
     squadId?: string;
     squadName?: string;
+    runId?: string;
+    toolAccessMode?: "ask_always" | "full_access";
+    toolAccessGranted?: boolean;
+    spawnSubAgent?: (request: SubAgentSpawnRequest) => Promise<SubAgentRunState>;
+    awaitSubAgentRun?: (runId: string, timeoutMs?: number) => Promise<SubAgentRunState | null>;
+    listSubAgentRuns?: () => Promise<SubAgentRunState[]>;
+    cancelSubAgentRun?: (runId: string, reason?: string) => Promise<SubAgentRunState | null>;
 }
 
 export type ToolArtifactKind = "file" | "shell" | "web" | "other";
@@ -77,10 +84,34 @@ export interface ToolResult {
     checks: ToolCheck[];
 }
 
+export interface SubAgentSpawnRequest {
+    task: string;
+    agentId?: string;
+    provider?: string;
+    model?: string;
+    awaitCompletion?: boolean;
+    timeoutMs?: number;
+}
+
+export interface SubAgentRunState {
+    runId: string;
+    parentRunId?: string;
+    status: "queued" | "running" | "completed" | "failed" | "cancelled";
+    agentId: string;
+    agentName: string;
+    task: string;
+    createdAt: number;
+    startedAt?: number;
+    finishedAt?: number;
+    output?: string;
+    error?: string;
+}
+
 export interface Tool {
     id: string;
     name: string;
     description: string;
+    privileged?: boolean;
     inputSchema?: ToolInputSchema;
     // Backward compatibility for existing tool definitions.
     parameters?: ToolInputSchema;

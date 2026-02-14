@@ -1,6 +1,6 @@
 "use client";
 
-import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
+import { AccessPermissionMode, AgentConfig, AgentStyle } from "@/lib/core/Agent";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield } from "lucide-react";
 import { GROQ_TTS_VOICES, EDGE_TTS_VOICES, BROWSER_TTS_VOICES, loadAudioSettings, saveAudioSettings, TTSProvider } from "@/lib/audio/types";
@@ -58,8 +58,32 @@ const AVAILABLE_TOOLS = [
     { id: "web_search", name: "Web Search", desc: "Search the internet", icon: "🔍" },
     { id: "fs_read", name: "Read Files", desc: "Read local files", icon: "📄" },
     { id: "fs_write", name: "Write Files", desc: "Create & edit files", icon: "✏️" },
+    { id: "fs_list", name: "List Files", desc: "List directory contents", icon: "🗂️" },
     { id: "shell_execute", name: "Terminal", desc: "Run shell commands", icon: "⌨️" },
+    { id: "mcp_all", name: "MCP Tools", desc: "Use all enabled local MCP services", icon: "🔌" },
+    { id: "sessions_spawn", name: "Spawn Sub-Agent", desc: "Delegate a task to another agent", icon: "🐾" },
+    { id: "sessions_await", name: "Await Sub-Agent", desc: "Wait for a delegated run to complete", icon: "⏳" },
+    { id: "sessions_list", name: "List Sub-Agents", desc: "Inspect delegated run statuses", icon: "📋" },
+    { id: "sessions_cancel", name: "Cancel Sub-Agent", desc: "Cancel a delegated run", icon: "🛑" },
 ];
+
+const ACCESS_PERMISSION_OPTIONS: Array<{
+    id: AccessPermissionMode;
+    label: string;
+    desc: string;
+}> = [
+    {
+        id: "ask_always",
+        label: "Ask Always",
+        desc: "Prompt before write-file or shell commands each message.",
+    },
+    {
+        id: "full_access",
+        label: "Full Access",
+        desc: "Allow write-file and shell commands without prompting.",
+    },
+];
+
 const FALLBACK_LLM_PROVIDERS = buildFallbackCatalogProviders();
 
 function formatCompactTokenCount(value?: number): string | null {
@@ -99,8 +123,8 @@ function getModelBadges(model: {
 export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps) {
     const { apiKey, apiKeys, debugLogsEnabled } = useSettings();
     const { providers: llmProviders, isRefreshingModels, refreshModels } = useModelCatalog();
-    const [formData, setFormData] = useState<AgentConfig>(
-        initialData || {
+    const [formData, setFormData] = useState<AgentConfig>(() => {
+        const seed = initialData || {
             name: "",
             role: "Assistant",
             description: "",
@@ -111,8 +135,13 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             provider: "groq",
             model: "llama-3.3-70b-versatile",
             reasoningEffort: DEFAULT_REASONING_EFFORT,
-        }
-    );
+        };
+
+        return {
+            ...seed,
+            accessMode: seed.accessMode === "full_access" ? "full_access" : "ask_always",
+        };
+    });
 
     const [activeSection, setActiveSection] = useState<"identity" | "prompt" | "model" | "tools">("identity");
     const [modelSubTab, setModelSubTab] = useState<"llm" | "voice">("llm");
@@ -236,10 +265,13 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
         [chatCapableModels, currentProvider?.id, effectiveToolFilteringEnabled, reasoningFilteringEnabled],
     );
     const capabilityFiltersActive = effectiveToolFilteringEnabled || reasoningFilteringEnabled;
-    const availableModels = filteredByCapabilityModels.length > 0
+    const requiresStrictToolFiltering = hasSelectedTools;
+    const availableModels = requiresStrictToolFiltering
         ? filteredByCapabilityModels
-        : chatCapableModels;
-    const fellBackFromCapabilityFiltering = capabilityFiltersActive && filteredByCapabilityModels.length === 0;
+        : (filteredByCapabilityModels.length > 0 ? filteredByCapabilityModels : chatCapableModels);
+    const fellBackFromCapabilityFiltering = !requiresStrictToolFiltering
+        && capabilityFiltersActive
+        && filteredByCapabilityModels.length === 0;
     const selectedModelId = formData.model || currentProvider?.defaultModel || availableModels[0]?.id || "llama-3.3-70b-versatile";
     const selectedModel = useMemo(
         () => availableModels.find((model) => model.id === selectedModelId),
@@ -247,7 +279,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
     );
     const selectedModelSupportsToolUse = selectedModel
         ? (selectedModel.capabilities?.nativeTools ?? supportsToolUse(currentProvider?.id || "groq", selectedModel.id))
-        : supportsToolUse(currentProvider?.id || "groq", selectedModelId);
+        : (effectiveToolFilteringEnabled ? false : supportsToolUse(currentProvider?.id || "groq", selectedModelId));
     const selectedModelSupportsReasoning = selectedModel
         ? (selectedModel.capabilities?.reasoning ?? supportsReasoningEffort(currentProvider?.id || "groq", selectedModel.id))
         : supportsReasoningEffort(currentProvider?.id || "groq", selectedModelId);
@@ -335,6 +367,8 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
         formData.model,
         reasoningFilteringEnabled,
     ]);
+    const hasToolModelSelectionGap = hasSelectedTools && (!selectedModel || !selectedModelSupportsToolUse);
+    const canSaveAgent = formData.name.trim().length > 0 && !hasToolModelSelectionGap;
 
     const handleGenerateInstructions = async () => {
         setIsGeneratingPrompt(true);
@@ -638,6 +672,11 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                             No models matched the active filters for this provider. Showing all chat-capable models.
                                         </p>
                                     )}
+                                    {hasSelectedTools && availableModels.length === 0 && (
+                                        <p className="text-[11px] text-[#f59e0b]">
+                                            No tool-capable models are available for this provider. Switch provider or remove tools.
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="space-y-2">
@@ -656,6 +695,11 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                         </button>
                                     </div>
                                     <div className="grid grid-cols-1 gap-1.5 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
+                                        {availableModels.length === 0 && (
+                                            <div className="text-[11px] text-[#8e8ea0] bg-[#2f2f2f] border border-[#424242] rounded-lg px-3 py-2.5">
+                                                No compatible models to display for the active capability filters.
+                                            </div>
+                                        )}
                                         {availableModels.map((model) => {
                                             const isSelected = selectedModelId === model.id;
                                             const badges = getModelBadges(model);
@@ -841,6 +885,36 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                 );
                             })}
                         </div>
+
+                        <div className="pt-3 space-y-2">
+                            <label className="text-xs font-medium text-[#b4b4b4]">Access Permissions</label>
+                            <p className="text-[11px] text-[#676767]">
+                                Controls whether write-file and shell tools require approval for each message.
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {ACCESS_PERMISSION_OPTIONS.map((option) => {
+                                    const isSelected = (formData.accessMode || "ask_always") === option.id;
+                                    return (
+                                        <button
+                                            key={option.id}
+                                            type="button"
+                                            onClick={() => setFormData((prev) => ({ ...prev, accessMode: option.id }))}
+                                            className={`px-4 py-3 rounded-lg border text-left transition-all ${isSelected
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className={`text-sm font-medium ${isSelected ? "text-white" : "text-[#ececec]"}`}>
+                                                {option.label}
+                                            </div>
+                                            <div className="text-[10px] text-[#b4b4b4] mt-0.5">
+                                                {option.desc}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>
@@ -858,8 +932,12 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                         Cancel
                     </button>
                     <button
-                        onClick={() => onSave({ ...formData, reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT })}
-                        disabled={!formData.name.trim()}
+                        onClick={() => onSave({
+                            ...formData,
+                            reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT,
+                            accessMode: formData.accessMode === "full_access" ? "full_access" : "ask_always",
+                        })}
+                        disabled={!canSaveAgent}
                         className="flex items-center gap-2 px-6 py-2 bg-[#10a37f] hover:bg-[#1a7f64] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium shadow-sm transition-all"
                     >
                         <Save size={14} />

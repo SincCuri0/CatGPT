@@ -1,8 +1,8 @@
 "use client";
 
 import { useSettings } from "@/hooks/useSettings";
-import { useState } from "react";
-import { X, Shield, ShieldAlert, Key, Save, Cat, ExternalLink, Check, Bug } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { X, Key, Save, Cat, ExternalLink, Check, Bug, Server } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PROVIDERS } from "@/lib/llm/constants";
 
@@ -20,18 +20,72 @@ const API_KEY_PROVIDERS = [
     },
 ];
 
+interface McpServiceSummary {
+    id: string;
+    name: string;
+    description?: string;
+    enabled: boolean;
+    command: string;
+    args: string[];
+    status: "disabled" | "idle" | "connecting" | "ready" | "error";
+    error?: string;
+    toolCount: number;
+}
+
+function getStatusBadge(status: McpServiceSummary["status"]): { label: string; className: string } {
+    if (status === "ready") {
+        return { label: "Ready", className: "bg-[#9ece6a]/10 text-[#9ece6a] border-[#9ece6a]/30" };
+    }
+    if (status === "connecting") {
+        return { label: "Starting", className: "bg-[#e0af68]/10 text-[#e0af68] border-[#e0af68]/30" };
+    }
+    if (status === "idle") {
+        return { label: "Idle", className: "bg-[#7dcfff]/10 text-[#7dcfff] border-[#7dcfff]/30" };
+    }
+    if (status === "disabled") {
+        return { label: "Disabled", className: "bg-[#565f89]/10 text-[#565f89] border-[#565f89]/30" };
+    }
+    return { label: "Error", className: "bg-[#f7768e]/10 text-[#f7768e] border-[#f7768e]/30" };
+}
+
 export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
     const {
         apiKeys,
         setProviderKey,
         serverConfiguredKeys,
-        safeMode,
-        setSafeMode,
         debugLogsEnabled,
         setDebugLogsEnabled,
     } = useSettings();
     const [tempKeys, setTempKeys] = useState<Record<string, string> | null>(null);
+    const [mcpServices, setMcpServices] = useState<McpServiceSummary[]>([]);
+    const [isLoadingMcpServices, setIsLoadingMcpServices] = useState(false);
+    const [mcpServicesError, setMcpServicesError] = useState<string | null>(null);
     const effectiveKeys = tempKeys ?? apiKeys;
+
+    const loadMcpServices = useCallback(async () => {
+        setIsLoadingMcpServices(true);
+        setMcpServicesError(null);
+        try {
+            const response = await fetch("/api/mcp/services", {
+                headers: debugLogsEnabled ? { "x-debug-logs": "1" } : undefined,
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Failed to load MCP services (${response.status})`);
+            }
+            const services = Array.isArray(data.services) ? data.services : [];
+            setMcpServices(services);
+        } catch (error: unknown) {
+            setMcpServicesError(error instanceof Error ? error.message : "Failed to load MCP services.");
+        } finally {
+            setIsLoadingMcpServices(false);
+        }
+    }, [debugLogsEnabled]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        void loadMcpServices();
+    }, [isOpen, loadMcpServices]);
 
     const handleKeyChange = (providerId: string, key: string) => {
         setTempKeys((prev) => ({
@@ -133,29 +187,73 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                 })}
                             </div>
 
-                            {/* Safe Mode Section */}
+                            {/* MCP Services Section */}
                             <div className="bg-[#24283b] rounded-2xl p-5 border border-[#414868]">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="flex items-center gap-2 text-sm font-bold text-[#c0caf5]">
-                                        {safeMode ? <Shield className="w-4 h-4 text-[#9ece6a]" /> : <ShieldAlert className="w-4 h-4 text-[#e0af68]" />}
-                                        Keyboard Sitting Protection
-                                    </span>
+                                <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-2 text-sm font-bold text-[#c0caf5]">
+                                        <Server className="w-4 h-4 text-[#7dcfff]" />
+                                        Local MCP Services
+                                    </div>
                                     <button
-                                        onClick={() => setSafeMode(!safeMode)}
-                                        className={`relative w-12 h-7 rounded-full transition-colors ${safeMode ? "bg-[#9ece6a]" : "bg-[#414868]"
-                                            }`}
+                                        onClick={() => void loadMcpServices()}
+                                        disabled={isLoadingMcpServices}
+                                        className="px-2 py-1 text-[10px] font-semibold rounded-md border border-[#414868] text-[#a9b1d6] hover:bg-[#1f2335] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
-                                        <div
-                                            className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${safeMode ? "left-6" : "left-1"
-                                                }`}
-                                        />
+                                        {isLoadingMcpServices ? "Loading..." : "Refresh"}
                                     </button>
                                 </div>
-                                <p className="text-xs text-[#787c99] leading-relaxed">
-                                    {safeMode
-                                        ? "Safe. Prevents cats from running `rm -rf /` by walking on the keyboard."
-                                        : "Dangerous. Cats have full shell access. Expect files to disappear."}
+                                <p className="text-[11px] text-[#787c99] mb-3">
+                                    These MCP servers are launched locally by CatGPT and exposed as tools via the `mcp_all` capability.
                                 </p>
+
+                                {mcpServicesError && (
+                                    <div className="text-[11px] text-[#f7768e] bg-[#f7768e]/10 border border-[#f7768e]/30 rounded-lg px-2.5 py-2 mb-2">
+                                        {mcpServicesError}
+                                    </div>
+                                )}
+
+                                {mcpServices.length === 0 && !isLoadingMcpServices && !mcpServicesError && (
+                                    <div className="text-[11px] text-[#787c99] bg-[#1f2335] border border-[#414868] rounded-lg px-2.5 py-2">
+                                        No MCP services configured.
+                                    </div>
+                                )}
+
+                                <div className="space-y-2 max-h-44 overflow-y-auto pr-1 custom-scrollbar">
+                                    {mcpServices.map((service) => {
+                                        const badge = getStatusBadge(service.status);
+                                        return (
+                                            <div
+                                                key={service.id}
+                                                className="rounded-lg border border-[#414868] bg-[#1f2335] px-3 py-2.5"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="min-w-0">
+                                                        <div className="text-xs font-semibold text-[#c0caf5] truncate">
+                                                            {service.name}
+                                                        </div>
+                                                        <div className="text-[10px] text-[#565f89] truncate">
+                                                            {service.id}
+                                                        </div>
+                                                    </div>
+                                                    <span className={`text-[10px] px-2 py-0.5 border rounded-full ${badge.className}`}>
+                                                        {badge.label}
+                                                    </span>
+                                                </div>
+                                                <div className="text-[10px] text-[#787c99] mt-1.5 break-all">
+                                                    {service.command} {service.args.join(" ")}
+                                                </div>
+                                                <div className="text-[10px] text-[#a9b1d6] mt-1">
+                                                    Tools: {service.toolCount} {service.enabled ? "" : "(disabled)"}
+                                                </div>
+                                                {service.error && (
+                                                    <div className="text-[10px] text-[#f7768e] mt-1 break-words">
+                                                        {service.error}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
 
                             {/* Debug Logs Section */}

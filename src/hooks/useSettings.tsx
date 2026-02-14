@@ -12,9 +12,6 @@ interface SettingsContextType {
     apiKeys: Record<string, string>;
     setProviderKey: (providerId: string, key: string) => void;
     serverConfiguredKeys: Record<string, boolean>;
-
-    safeMode: boolean;
-    setSafeMode: (mode: boolean) => void;
     debugLogsEnabled: boolean;
     setDebugLogsEnabled: (enabled: boolean) => void;
     themeMetadata: ThemeMetadata;
@@ -50,13 +47,6 @@ function getInitialApiKeys(): Record<string, string> {
     return localKeys;
 }
 
-function getInitialSafeMode(): boolean {
-    if (typeof window === "undefined") return true;
-    const storedSafeMode = localStorage.getItem("safe_mode");
-    if (storedSafeMode === null) return true;
-    return storedSafeMode === "true";
-}
-
 function getInitialDebugLogsEnabled(): boolean {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(DEBUG_LOGS_STORAGE_KEY) === "true";
@@ -80,8 +70,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const [apiKeys, setApiKeysState] = useState<Record<string, string>>(() => getInitialApiKeys());
     // serverConfiguredKeys: which keys are set on server (.env)
     const [serverConfiguredKeys, setServerConfiguredKeys] = useState<Record<string, boolean>>({});
-
-    const [safeMode, setSafeModeState] = useState<boolean>(() => getInitialSafeMode());
     const [debugLogsEnabled, setDebugLogsEnabledState] = useState<boolean>(() => getInitialDebugLogsEnabled());
     const [themeMetadata, setThemeMetadataState] = useState<ThemeMetadata>(() => getInitialTheme());
 
@@ -131,11 +119,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Legacy setter
     const setApiKey = (key: string) => setProviderKey("groq", key);
 
-    const setSafeMode = (mode: boolean) => {
-        setSafeModeState(mode);
-        localStorage.setItem("safe_mode", String(mode));
-    };
-
     const setDebugLogsEnabled = (enabled: boolean) => {
         setDebugLogsEnabledState(enabled);
         localStorage.setItem(DEBUG_LOGS_STORAGE_KEY, String(enabled));
@@ -153,8 +136,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
             apiKeys,
             setProviderKey,
             serverConfiguredKeys,
-            safeMode,
-            setSafeMode,
             debugLogsEnabled,
             setDebugLogsEnabled,
             themeMetadata,

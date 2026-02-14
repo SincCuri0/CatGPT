@@ -106,6 +106,22 @@ export function ChatInterface({
     const [activePresentationMessageId, setActivePresentationMessageId] = useState<string | null>(null);
     const [isPresentingQueue, setIsPresentingQueue] = useState(false);
     const personality = getAgentPersonality(agent);
+    const agentLandingDescription = useMemo(() => {
+        const explicitDescription = (agent.description || "").trim();
+        if (explicitDescription) {
+            return explicitDescription.replace(/^description:\s*/i, "").trim();
+        }
+
+        const prompt = (agent.systemPrompt || "").trim();
+        if (!prompt) return "";
+
+        const descriptionMatch = prompt.match(/\bdescription:\s*([\s\S]*)$/i);
+        if (descriptionMatch?.[1]) {
+            return descriptionMatch[1].trim();
+        }
+
+        return prompt;
+    }, [agent.description, agent.systemPrompt]);
     const isLiveCampaign = interactionMode === "live_campaign";
 
     // Audio hooks
@@ -114,19 +130,21 @@ export function ChatInterface({
 
     // Track which message is being spoken
     const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+    const [activeSlashIndex, setActiveSlashIndex] = useState(0);
     const normalizedInput = input.trimStart();
     const isSlashInput = normalizedInput.startsWith("/");
-    const slashCommandToken = isSlashInput ? normalizedInput.split(/\s+/)[0].toLowerCase() : "";
-    const matchingSlashCommands = isSlashInput
+    const isSlashCommandEditing = isSlashInput && /^\/\S*$/.test(normalizedInput);
+    const slashCommandToken = isSlashCommandEditing ? normalizedInput.toLowerCase() : "";
+    const matchingSlashCommands = isSlashCommandEditing
         ? slashCommands.filter((cmd) => {
             if (slashCommandToken === "/") return true;
             return cmd.command.toLowerCase().startsWith(slashCommandToken);
         })
         : [];
-    const visibleSlashCommands = isSlashInput
+    const visibleSlashCommands = isSlashCommandEditing
         ? (matchingSlashCommands.length > 0 ? matchingSlashCommands : slashCommands)
         : [];
-    const showSlashCommands = visibleSlashCommands.length > 0;
+    const showSlashCommands = isSlashCommandEditing && visibleSlashCommands.length > 0;
 
     const allParticipants = useMemo(() => {
         const byId = new Map<string, AgentConfig>();
@@ -315,6 +333,19 @@ export function ChatInterface({
     }, [input]);
 
     useEffect(() => {
+        if (!showSlashCommands) {
+            setActiveSlashIndex(0);
+            return;
+        }
+        setActiveSlashIndex((prev) => Math.min(prev, visibleSlashCommands.length - 1));
+    }, [showSlashCommands, visibleSlashCommands.length]);
+
+    useEffect(() => {
+        if (!showSlashCommands) return;
+        setActiveSlashIndex(0);
+    }, [showSlashCommands, slashCommandToken]);
+
+    useEffect(() => {
         if (isLiveCampaign) return;
         const latestAssistant = [...messages].reverse().find((msg) => msg.role === "assistant");
         if (!latestAssistant) return;
@@ -378,11 +409,53 @@ export function ChatInterface({
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Tab" && showSlashCommands) {
-            e.preventDefault();
-            setInput(`${visibleSlashCommands[0].command} `);
-            return;
+    const applySlashCommand = useCallback((command: string) => {
+        setInput(`${command} `);
+        requestAnimationFrame(() => {
+            textareaRef.current?.focus();
+        });
+    }, []);
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (showSlashCommands) {
+            const commandCount = visibleSlashCommands.length;
+            if (commandCount > 0) {
+                const applyActiveSlashCommand = () => {
+                    const activeCommand = visibleSlashCommands[activeSlashIndex] || visibleSlashCommands[0];
+                    if (!activeCommand) return false;
+                    applySlashCommand(activeCommand.command);
+                    return true;
+                };
+
+                if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActiveSlashIndex((prev) => (prev + 1) % commandCount);
+                    return;
+                }
+
+                if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActiveSlashIndex((prev) => (prev - 1 + commandCount) % commandCount);
+                    return;
+                }
+
+                if (e.key === "Tab") {
+                    e.preventDefault();
+                    applyActiveSlashCommand();
+                    return;
+                }
+
+                const caretAtEnd = e.currentTarget.selectionStart === input.length
+                    && e.currentTarget.selectionEnd === input.length;
+                const isApplyKey = (!e.shiftKey && e.key === "Enter")
+                    || e.key === " "
+                    || (e.key === "ArrowRight" && caretAtEnd);
+
+                if (isApplyKey) {
+                    e.preventDefault();
+                    if (applyActiveSlashCommand()) return;
+                }
+            }
         }
 
         if (e.key === "Enter" && !e.shiftKey) {
@@ -483,16 +556,14 @@ export function ChatInterface({
                                         <p className="text-sm text-[#8e8ea0]">{agent.role}</p>
                                     </motion.div>
 
-                                    {agent.systemPrompt && (
+                                    {agentLandingDescription && (
                                         <motion.p
                                             initial={{ y: 10, opacity: 0 }}
                                             animate={{ y: 0, opacity: 1 }}
                                             transition={{ delay: 0.2 }}
                                             className="text-sm text-[#b4b4b4] max-w-md leading-relaxed"
                                         >
-                                            {agent.systemPrompt.length > 120
-                                                ? agent.systemPrompt.substring(0, 120) + "..."
-                                                : agent.systemPrompt}
+                                            {agentLandingDescription}
                                         </motion.p>
                                     )}
                                 </>
@@ -646,21 +717,27 @@ export function ChatInterface({
                     {showSlashCommands && (
                         <div className="absolute left-0 right-0 bottom-full mb-2 z-30">
                             <div className="bg-[#171717] border border-white/10 rounded-xl shadow-xl overflow-hidden">
-                                {visibleSlashCommands.map((cmd) => (
-                                    <button
-                                        key={cmd.command}
-                                        type="button"
-                                        onMouseDown={(e) => {
-                                            e.preventDefault();
-                                            setInput(`${cmd.command} `);
-                                            textareaRef.current?.focus();
-                                        }}
-                                        className="w-full px-4 py-2.5 text-left hover:bg-[#2f2f2f] transition-colors border-b border-white/5 last:border-b-0"
-                                    >
-                                        <div className="text-xs font-mono text-[#10a37f]">{cmd.command}</div>
-                                        <div className="text-xs text-[#b4b4b4] mt-0.5">{cmd.description}</div>
-                                    </button>
-                                ))}
+                                {visibleSlashCommands.map((cmd, index) => {
+                                    const isActive = index === activeSlashIndex;
+                                    return (
+                                        <button
+                                            key={cmd.command}
+                                            type="button"
+                                            onMouseEnter={() => setActiveSlashIndex(index)}
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setActiveSlashIndex(index);
+                                                applySlashCommand(cmd.command);
+                                            }}
+                                            className={`w-full px-4 py-2.5 text-left transition-colors border-b border-white/5 last:border-b-0 ${
+                                                isActive ? "bg-[#2f2f2f]" : "hover:bg-[#242424]"
+                                            }`}
+                                        >
+                                            <div className="text-xs font-mono text-[#10a37f]">{cmd.command}</div>
+                                            <div className="text-xs text-[#b4b4b4] mt-0.5">{cmd.description}</div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}

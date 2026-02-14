@@ -1,5 +1,5 @@
 {
-  "updatedAt": 1770977916423,
+  "updatedAt": 1771047472247,
   "providers": [
     {
       "id": "groq",
@@ -26,7 +26,7 @@
             "maxOutputTokens": 4096,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -50,7 +50,7 @@
             "maxOutputTokens": 50000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -74,27 +74,7 @@
             "maxOutputTokens": 50000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
-          "id": "gemma2-9b-it",
-          "label": "Gemma 2 9B",
-          "description": "Google model on Groq",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": true,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -106,7 +86,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -118,7 +98,7 @@
             "maxOutputTokens": 8192,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -130,7 +110,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -142,27 +122,7 @@
             "maxOutputTokens": 8192,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
-          "id": "llama-guard-3-8b",
-          "label": "Llama Guard 3",
-          "description": "Safety-focused",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": true,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -186,7 +146,7 @@
             "maxOutputTokens": 131072,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977905907,
+              "assessedAt": 1771047460415,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -209,9 +169,9 @@
             "contextWindow": 131072,
             "maxOutputTokens": 32768,
             "assessment": {
-              "source": "inferred",
-              "assessedAt": 1770977903779,
-              "notes": "Capabilities inferred from model id and provider defaults."
+              "source": "probe",
+              "assessedAt": 1771047460415,
+              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -233,9 +193,9 @@
             "contextWindow": 131072,
             "maxOutputTokens": 8192,
             "assessment": {
-              "source": "inferred",
-              "assessedAt": 1770977903779,
-              "notes": "Capabilities inferred from model id and provider defaults."
+              "source": "probe",
+              "assessedAt": 1771047460415,
+              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -258,7 +218,7 @@
             "maxOutputTokens": 8192,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -270,7 +230,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -282,7 +242,7 @@
             "maxOutputTokens": 1024,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -294,7 +254,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -306,7 +266,7 @@
             "maxOutputTokens": 512,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -318,7 +278,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -330,22 +290,9 @@
             "maxOutputTokens": 512,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
-          }
-        },
-        {
-          "id": "mixtral-8x7b-32768",
-          "label": "Mixtral 8x7B",
-          "description": "32K context",
-          "capabilities": {
-            "chat": true,
-            "reasoning": false,
-            "nativeTools": true,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
           }
         },
         {
@@ -367,7 +314,7 @@
             "maxOutputTokens": 16384,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -391,7 +338,7 @@
             "maxOutputTokens": 16384,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -415,7 +362,7 @@
             "maxOutputTokens": 65536,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -439,7 +386,7 @@
             "maxOutputTokens": 65536,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -451,7 +398,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -463,7 +410,7 @@
             "maxOutputTokens": 65536,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -487,7 +434,7 @@
             "maxOutputTokens": 40960,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -499,7 +446,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -511,7 +458,7 @@
             "maxOutputTokens": 448,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -523,7 +470,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -535,7 +482,7 @@
             "maxOutputTokens": 448,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903779,
+              "assessedAt": 1771047458986,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -566,7 +513,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -587,7 +534,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -609,7 +556,7 @@
             "ownedBy": "openai",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -630,7 +577,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -651,7 +598,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -672,7 +619,7 @@
             "ownedBy": "openai-internal",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -693,7 +640,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -714,7 +661,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -725,7 +672,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -735,7 +682,7 @@
             "ownedBy": "openai",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -746,7 +693,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -756,7 +703,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -767,7 +714,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -777,7 +724,7 @@
             "ownedBy": "openai",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -788,7 +735,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -798,7 +745,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -810,7 +757,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -820,7 +767,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -831,7 +778,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -841,7 +788,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -852,7 +799,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -862,7 +809,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -883,7 +830,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -904,7 +851,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -925,7 +872,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -946,7 +893,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -967,7 +914,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -988,7 +935,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1010,7 +957,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1031,7 +978,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1052,7 +999,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1073,7 +1020,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1084,7 +1031,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1094,7 +1041,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1105,7 +1052,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1115,7 +1062,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1126,7 +1073,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1136,7 +1083,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1157,7 +1104,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1178,7 +1125,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1189,7 +1136,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1199,7 +1146,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1210,7 +1157,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1220,7 +1167,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1241,7 +1188,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1262,7 +1209,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1283,7 +1230,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1304,7 +1251,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1325,7 +1272,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1346,7 +1293,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1367,7 +1314,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1388,7 +1335,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1409,7 +1356,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1430,7 +1377,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1451,7 +1398,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1472,7 +1419,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1493,7 +1440,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1514,7 +1461,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1535,7 +1482,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1556,7 +1503,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1577,7 +1524,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1598,7 +1545,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1619,7 +1566,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1640,7 +1587,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1661,7 +1608,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1682,7 +1629,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1703,7 +1650,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1724,7 +1671,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1745,7 +1692,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1766,7 +1713,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1787,7 +1734,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1808,7 +1755,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1829,7 +1776,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1850,7 +1797,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1871,7 +1818,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1892,7 +1839,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1913,7 +1860,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1924,7 +1871,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1934,7 +1881,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1945,7 +1892,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1955,7 +1902,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1966,7 +1913,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1976,7 +1923,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -1987,7 +1934,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -1997,7 +1944,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2008,7 +1955,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2018,7 +1965,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2039,7 +1986,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2060,7 +2007,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2081,7 +2028,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2102,7 +2049,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2123,7 +2070,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2144,7 +2091,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2165,7 +2112,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2186,7 +2133,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2207,7 +2154,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2228,7 +2175,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2249,7 +2196,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2270,7 +2217,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2291,7 +2238,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2312,7 +2259,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2333,7 +2280,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2354,7 +2301,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2375,7 +2322,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2396,7 +2343,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2417,7 +2364,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2438,7 +2385,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2449,7 +2396,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2459,7 +2406,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2470,7 +2417,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2480,7 +2427,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2491,7 +2438,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2501,7 +2448,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2512,7 +2459,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2522,7 +2469,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2533,7 +2480,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2543,7 +2490,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2554,7 +2501,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2564,7 +2511,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2575,7 +2522,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2585,7 +2532,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2596,7 +2543,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2606,7 +2553,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2617,7 +2564,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2627,7 +2574,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2638,7 +2585,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2648,7 +2595,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2659,7 +2606,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2669,7 +2616,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2680,7 +2627,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2690,7 +2637,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2701,7 +2648,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2711,7 +2658,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2722,7 +2669,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2732,7 +2679,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2743,7 +2690,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2753,7 +2700,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2764,7 +2711,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -2774,7 +2721,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2785,7 +2732,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": true
@@ -2795,7 +2742,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2806,7 +2753,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": true
@@ -2816,7 +2763,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2827,7 +2774,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": true
@@ -2837,7 +2784,7 @@
             "ownedBy": "openai-internal",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2848,7 +2795,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2858,7 +2805,7 @@
             "ownedBy": "openai-internal",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2869,7 +2816,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2879,7 +2826,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2890,7 +2837,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2900,7 +2847,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2911,7 +2858,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": false,
             "textToSpeech": true,
             "embeddings": false
@@ -2921,7 +2868,7 @@
             "ownedBy": "system",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904247,
+              "assessedAt": 1771047459680,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2932,7 +2879,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": true,
+            "nativeTools": false,
             "speechToText": true,
             "textToSpeech": false,
             "embeddings": false
@@ -2942,7 +2889,7 @@
             "ownedBy": "openai-internal",
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977904248,
+              "assessedAt": 1771047459681,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -2958,53 +2905,13 @@
       "defaultModel": "claude-3-haiku-20240307",
       "models": [
         {
-          "id": "claude-3-opus-20240229",
-          "label": "Claude 3 Opus",
-          "description": "Most powerful",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": false,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977916423,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
-          "id": "claude-3-sonnet-20240229",
-          "label": "Claude 3 Sonnet",
-          "description": "Balanced",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": false,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977916423,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
           "id": "claude-3-haiku-20240307",
           "label": "Claude Haiku 3",
           "description": "Fastest",
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3013,7 +2920,7 @@
             "createdAt": 1709769600000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3024,7 +2931,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3033,7 +2940,7 @@
             "createdAt": 1729555200000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3044,7 +2951,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3053,7 +2960,7 @@
             "createdAt": 1760486400000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3064,7 +2971,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3073,7 +2980,7 @@
             "createdAt": 1747872000000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3084,7 +2991,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3093,7 +3000,7 @@
             "createdAt": 1754352000000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3104,7 +3011,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3113,7 +3020,7 @@
             "createdAt": 1763942400000,
             "assessment": {
               "source": "probe",
-              "assessedAt": 1770977916423,
+              "assessedAt": 1771047472247,
               "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
@@ -3124,7 +3031,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3132,9 +3039,9 @@
           "metadata": {
             "createdAt": 1770163200000,
             "assessment": {
-              "source": "inferred",
-              "assessedAt": 1770977903885,
-              "notes": "Capabilities inferred from model id and provider defaults."
+              "source": "probe",
+              "assessedAt": 1771047472247,
+              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -3144,7 +3051,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3152,9 +3059,9 @@
           "metadata": {
             "createdAt": 1740355200000,
             "assessment": {
-              "source": "inferred",
-              "assessedAt": 1770977903885,
-              "notes": "Capabilities inferred from model id and provider defaults."
+              "source": "probe",
+              "assessedAt": 1771047472247,
+              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -3164,7 +3071,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3173,7 +3080,7 @@
             "createdAt": 1747872000000,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903885,
+              "assessedAt": 1771047459120,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -3184,7 +3091,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3193,7 +3100,7 @@
             "createdAt": 1759104000000,
             "assessment": {
               "source": "inferred",
-              "assessedAt": 1770977903885,
+              "assessedAt": 1771047459120,
               "notes": "Capabilities inferred from model id and provider defaults."
             }
           }
@@ -3229,68 +3136,8 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
-            }
-          }
-        },
-        {
-          "id": "gemini-pro",
-          "label": "Gemini 1.0 Pro",
-          "description": "Legacy Pro",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": false,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977905651,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
-          "id": "gemini-1.5-flash",
-          "label": "Gemini 1.5 Flash",
-          "description": "Fast & cost-efficient",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": false,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977905651,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
-            }
-          }
-        },
-        {
-          "id": "gemini-1.5-pro",
-          "label": "Gemini 1.5 Pro",
-          "description": "Mid-size multimodal",
-          "capabilities": {
-            "chat": false,
-            "reasoning": false,
-            "nativeTools": false,
-            "speechToText": false,
-            "textToSpeech": false,
-            "embeddings": false
-          },
-          "metadata": {
-            "assessment": {
-              "source": "probe",
-              "assessedAt": 1770977905651,
-              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -3301,7 +3148,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3317,7 +3164,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3344,7 +3191,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3356,7 +3203,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3372,7 +3219,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3384,7 +3231,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3400,7 +3247,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3412,7 +3259,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3428,7 +3275,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3440,7 +3287,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3454,7 +3301,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3466,7 +3313,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3481,9 +3328,9 @@
               "batchGenerateContent"
             ],
             "assessment": {
-              "source": "provider",
-              "assessedAt": 1770977903861,
-              "notes": "Capabilities sourced from provider metadata plus inference."
+              "source": "provider+probe",
+              "assessedAt": 1771047463804,
+              "notes": "Capabilities were probed using lightweight provider API calls during manual refresh."
             }
           }
         },
@@ -3494,7 +3341,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3510,7 +3357,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3536,7 +3383,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3548,7 +3395,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3564,7 +3411,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3576,7 +3423,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3592,7 +3439,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3604,7 +3451,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3620,7 +3467,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459021,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3647,7 +3494,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3658,8 +3505,8 @@
           "description": "Gemini 3 Flash Preview (1M ctx | 65.5K out)",
           "capabilities": {
             "chat": true,
-            "reasoning": false,
-            "nativeTools": false,
+            "reasoning": true,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3675,7 +3522,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3686,8 +3533,8 @@
           "description": "Gemini 3 Pro Preview (1M ctx | 65.5K out)",
           "capabilities": {
             "chat": true,
-            "reasoning": false,
-            "nativeTools": false,
+            "reasoning": true,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3703,7 +3550,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3715,7 +3562,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3731,7 +3578,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3743,7 +3590,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3759,7 +3606,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3771,7 +3618,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3787,7 +3634,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3799,7 +3646,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3815,7 +3662,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3827,7 +3674,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -3841,7 +3688,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3867,7 +3714,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3893,7 +3740,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3919,7 +3766,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3945,7 +3792,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3971,7 +3818,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -3997,7 +3844,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903861,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4009,7 +3856,7 @@
           "capabilities": {
             "chat": true,
             "reasoning": true,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -4024,7 +3871,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4035,8 +3882,8 @@
           "description": "Gemini 3 Pro Image Preview (131.1K ctx | 32.8K out)",
           "capabilities": {
             "chat": true,
-            "reasoning": false,
-            "nativeTools": false,
+            "reasoning": true,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -4051,7 +3898,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4078,7 +3925,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4090,7 +3937,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -4104,7 +3951,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4116,7 +3963,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -4130,7 +3977,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4142,7 +3989,7 @@
           "capabilities": {
             "chat": false,
             "reasoning": false,
-            "nativeTools": false,
+            "nativeTools": true,
             "speechToText": false,
             "textToSpeech": false,
             "embeddings": false
@@ -4156,7 +4003,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4184,7 +4031,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4209,7 +4056,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4234,7 +4081,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4259,7 +4106,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4284,7 +4131,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4309,7 +4156,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4334,7 +4181,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4359,7 +4206,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4384,7 +4231,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4409,7 +4256,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4434,7 +4281,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }
@@ -4459,7 +4306,7 @@
             ],
             "assessment": {
               "source": "provider",
-              "assessedAt": 1770977903862,
+              "assessedAt": 1771047459022,
               "notes": "Capabilities sourced from provider metadata plus inference."
             }
           }

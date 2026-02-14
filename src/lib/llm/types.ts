@@ -1,6 +1,9 @@
 export interface LLMMessage {
-    role: "system" | "user" | "assistant";
+    role: "system" | "user" | "assistant" | "tool";
     content: string;
+    name?: string;
+    toolCallId?: string;
+    toolCalls?: LLMToolCall[];
 }
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
@@ -18,10 +21,25 @@ export interface LLMToolDefinition {
 }
 
 export interface LLMToolCall {
-    id?: string;
+    id: string;
     name: string;
     argumentsText: string;
 }
+
+export interface LLMJsonSchemaResponseFormat {
+    type: "json_schema";
+    json_schema: {
+        name: string;
+        schema: Record<string, unknown>;
+        strict?: boolean;
+    };
+}
+
+export interface LLMJsonObjectResponseFormat {
+    type: "json_object";
+}
+
+export type LLMResponseFormat = LLMJsonSchemaResponseFormat | LLMJsonObjectResponseFormat;
 
 export interface LLMChatOptions {
     temperature?: number;
@@ -29,6 +47,7 @@ export interface LLMChatOptions {
     tools?: LLMToolDefinition[];
     toolChoice?: "none" | "auto";
     reasoningEffort?: ReasoningEffort;
+    responseFormat?: LLMResponseFormat;
 }
 
 export interface LLMResponse {

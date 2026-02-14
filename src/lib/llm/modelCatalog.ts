@@ -122,7 +122,19 @@ function supportsGroqToolUse(modelId: string): boolean {
     // Groq's Compound systems currently don't support local/remote tool use in the same way
     // as standard function-calling models.
     if (normalized.includes("compound")) return false;
-    return true;
+    // Keep this conservative to avoid exposing tool-incompatible models in agent selection.
+    // Source: Groq tool-use docs model support matrix.
+    // https://console.groq.com/docs/tool-use/overview
+    return hasAnyToken(normalized, [
+        "gpt-oss",
+        "llama-3.3",
+        "llama-3.1-8b-instant",
+        "llama-4-scout",
+        "llama-4-maverick",
+        "qwen3",
+        "qwen/qwen3",
+        "kimi-k2",
+    ]);
 }
 
 function supportsAnthropicToolUse(modelId: string): boolean {

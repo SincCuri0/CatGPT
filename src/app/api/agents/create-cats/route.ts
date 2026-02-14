@@ -4,7 +4,7 @@ import { getEnvVariable } from "@/lib/env";
 import type { AgentStyle } from "@/lib/core/Agent";
 import { DEFAULT_REASONING_EFFORT, PROVIDERS } from "@/lib/llm/constants";
 import type { ReasoningEffort } from "@/lib/llm/types";
-import { isModelChatCapable, supportsReasoningEffort } from "@/lib/llm/modelCatalog";
+import { isModelChatCapable, supportsReasoningEffort, supportsToolUse } from "@/lib/llm/modelCatalog";
 import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
@@ -14,7 +14,18 @@ const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
     google: "GEMINI_API_KEY",
 };
 
-const ALLOWED_TOOL_IDS = new Set(["web_search", "fs_read", "fs_write", "shell_execute"]);
+const ALLOWED_TOOL_IDS = new Set([
+    "web_search",
+    "fs_read",
+    "fs_write",
+    "fs_list",
+    "shell_execute",
+    "mcp_all",
+    "sessions_spawn",
+    "sessions_await",
+    "sessions_list",
+    "sessions_cancel",
+]);
 const ALLOWED_STYLES = new Set<AgentStyle>(["assistant", "character", "expert", "custom"]);
 
 interface ExistingAgentSummary {
@@ -107,9 +118,28 @@ function isProviderSupported(providerId: string): boolean {
     return PROVIDERS.some((provider) => provider.id === providerId);
 }
 
-function defaultModelForProvider(providerId: string): string {
+function defaultModelForProvider(
+    providerId: string,
+    requirements?: { requireToolUse?: boolean },
+): string {
     const provider = PROVIDERS.find((candidate) => candidate.id === providerId);
-    return provider?.defaultModel || "llama-3.3-70b-versatile";
+    const safeFallback = "llama-3.3-70b-versatile";
+    if (!provider) return safeFallback;
+
+    const requireToolUse = requirements?.requireToolUse === true;
+    const compatible = provider.models.find((model) => (
+        isModelChatCapable({ id: model.id }, providerId)
+        && (!requireToolUse || supportsToolUse(providerId, model.id))
+    ));
+
+    if (provider.defaultModel
+        && isModelChatCapable({ id: provider.defaultModel }, providerId)
+        && (!requireToolUse || supportsToolUse(providerId, provider.defaultModel))
+    ) {
+        return provider.defaultModel;
+    }
+
+    return compatible?.id || provider.defaultModel || safeFallback;
 }
 
 function sanitizeText(value: unknown): string {
@@ -275,14 +305,18 @@ function normalizeAgentDraft(
 
     const providerCandidate = sanitizeText(record.provider).toLowerCase();
     const provider = isProviderSupported(providerCandidate) ? providerCandidate : context.defaultProvider;
+    const tools = sanitizeTools(record.tools);
+    const requireToolUse = tools.length > 0;
 
     const modelCandidate = sanitizeText(record.model);
     const initialModel = modelCandidate || (provider === context.defaultProvider
         ? context.defaultModel
-        : defaultModelForProvider(provider));
+        : defaultModelForProvider(provider, { requireToolUse }));
+    const fallbackModel = defaultModelForProvider(provider, { requireToolUse });
     const model = isModelChatCapable({ id: initialModel }, provider)
+        && (!requireToolUse || supportsToolUse(provider, initialModel))
         ? initialModel
-        : defaultModelForProvider(provider);
+        : fallbackModel;
     const reasoningEffort = typeof record.reasoningEffort === "string"
         ? normalizeReasoningEffort(record.reasoningEffort)
         : context.defaultReasoningEffort;
@@ -291,7 +325,6 @@ function normalizeAgentDraft(
         : "none";
 
     const voiceId = sanitizeText(record.voiceId) || "en-US-ChristopherNeural";
-    const tools = sanitizeTools(record.tools);
 
     const fallbackName = `${role} Cat ${index + 1}`;
     const name = makeUniqueName(nameFromModel || fallbackName, context.existingNames);
@@ -400,7 +433,7 @@ function buildPlannerPrompt(
         '      "description": "string",',
         '      "style": "assistant|character|expert|custom",',
         '      "systemPrompt": "string",',
-        '      "tools": ["web_search"|"fs_read"|"fs_write"|"shell_execute"],',
+        '      "tools": ["web_search"|"fs_read"|"fs_write"|"fs_list"|"shell_execute"|"mcp_all"|"sessions_spawn"|"sessions_await"|"sessions_list"|"sessions_cancel"],',
         '      "provider": "groq|openai|anthropic|google",',
         '      "model": "string",',
         '      "reasoningEffort": "none|low|medium|high",',

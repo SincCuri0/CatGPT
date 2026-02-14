@@ -1,7 +1,15 @@
 import { v4 as uuidv4 } from "uuid";
 import { PROVIDERS } from "../llm/constants";
-import { Agent, AgentApiKeys, AgentConfig } from "./Agent";
+import type {
+    LLMChatOptions,
+    LLMClient,
+    LLMMessage,
+    LLMResponse,
+    LLMResponseFormat,
+} from "../llm/types";
+import { AccessPermissionMode, Agent, AgentApiKeys, AgentConfig } from "./Agent";
 import { Message, Tool } from "./types";
+import { SubAgentRuntime } from "./runtime/SubAgentRuntime";
 import {
     DEFAULT_SQUAD_ORCHESTRATOR_PROFILE,
     DirectorDecision,
@@ -18,6 +26,44 @@ import {
 
 const DEFAULT_MAX_ITERATIONS = 6;
 const DIRECTOR_HISTORY_LIMIT = 16;
+const GREETING_ONLY_PATTERN = /^(hi|hello|hey|yo|sup|howdy|good morning|good afternoon|good evening|thanks|thank you|ok|okay|k|cool|nice|lol|hmm|huh|yes|no|maybe|help)$/;
+const SMALL_TALK_ONLY_PATTERN = /^(how are you|whats up|what's up|who are you)$/;
+const GROQ_STRICT_ORCHESTRATOR_DEFAULT_MODEL = "gpt-oss-20b";
+const DIRECTOR_DECISION_RESPONSE_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: {
+            type: "string",
+            enum: ["continue", "complete", "needs_user_input", "blocked"],
+        },
+        summary: {
+            type: "string",
+            minLength: 1,
+        },
+        targetAgentId: {
+            type: "string",
+            minLength: 1,
+        },
+        instruction: {
+            type: "string",
+            minLength: 1,
+        },
+        responseToUser: {
+            type: "string",
+            minLength: 1,
+        },
+        userQuestion: {
+            type: "string",
+            minLength: 1,
+        },
+        blockerReason: {
+            type: "string",
+            minLength: 1,
+        },
+    },
+    required: ["status", "summary"],
+};
 
 function extractJsonObject(raw: string): Record<string, unknown> | null {
     const stripped = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -67,6 +113,9 @@ function inferToolCapabilities(toolIds: string[]): string[] {
         if (toolId === "web_search") {
             capabilities.add("web-research");
         }
+        if (toolId === "sessions_spawn" || toolId === "sessions_await" || toolId === "sessions_list" || toolId === "sessions_cancel") {
+            capabilities.add("delegation");
+        }
     }
 
     return Array.from(capabilities);
@@ -82,6 +131,12 @@ interface WorkerExecutionVerification {
     ok: boolean;
     reason: string;
 }
+
+interface SquadRunOptions {
+    toolAccessGranted?: boolean;
+}
+
+type OrchestratorDebugLogFn = (message: string, data?: unknown) => void;
 
 function inferWorkerExecutionExpectation(instruction: string, worker: AgentConfig): WorkerExecutionExpectation {
     const toolIds = worker.tools || [];
@@ -165,6 +220,87 @@ function verifyWorkerExecution(
     return { ok: true, reason: "Tool execution requirements satisfied." };
 }
 
+function normalizeUserUtterance(input: string): string {
+    return input
+        .toLowerCase()
+        .replace(/[!?.,]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function hasNoActionableObjective(userMessage: string): boolean {
+    const normalized = normalizeUserUtterance(userMessage);
+    if (!normalized) return true;
+    if (GREETING_ONLY_PATTERN.test(normalized)) return true;
+    if (SMALL_TALK_ONLY_PATTERN.test(normalized)) return true;
+    if (/^(hi|hello|hey|yo|sup|howdy)\b/.test(normalized) && normalized.split(" ").length <= 3) return true;
+    return false;
+}
+
+function hasWebResearchCapability(worker: AgentConfig): boolean {
+    const toolIds = worker.tools || [];
+    return toolIds.includes("web_search") || toolIds.includes("search_internet");
+}
+
+function isLikelyBuildRequest(userMessage: string): boolean {
+    const normalized = normalizeUserUtterance(userMessage);
+    return /(build|make|create|implement|code|program|develop|ship|write|design|draft|plan|fix|refactor)/.test(normalized)
+        || /(game|app|website|api|script|component|feature|project|tool)/.test(normalized);
+}
+
+function selectBestEffortWorker(
+    runtime: SquadRuntime,
+    userMessage: string,
+    preferResearch: boolean,
+): AgentConfig | null {
+    const buildIntent = isLikelyBuildRequest(userMessage);
+    const scored = runtime.workers.map((worker, index) => {
+        const toolIds = worker.tools || [];
+        const hasWeb = hasWebResearchCapability(worker);
+        const hasFile = toolIds.includes("fs_write") || toolIds.includes("write_file")
+            || toolIds.includes("fs_read") || toolIds.includes("read_file")
+            || toolIds.includes("fs_list") || toolIds.includes("list_directory");
+        const hasShell = toolIds.includes("shell_execute") || toolIds.includes("execute_command");
+        const roleText = `${worker.name} ${worker.role} ${worker.description || ""}`.toLowerCase();
+        const isResearchRole = /(research|analyst|investigat|fact|search)/.test(roleText);
+        const isBuilderRole = /(engineer|developer|programmer|coder|architect|builder)/.test(roleText);
+
+        let score = 0;
+        if (toolIds.length > 0) score += 5;
+        if (preferResearch && hasWeb) score += 60;
+        if (preferResearch && isResearchRole) score += 30;
+        if (buildIntent && (hasFile || hasShell)) score += 25;
+        if (buildIntent && isBuilderRole) score += 15;
+        if (buildIntent && hasWeb) score += 8;
+
+        return { worker, index, score };
+    });
+
+    scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.index - b.index;
+    });
+
+    return scored[0]?.worker || null;
+}
+
+function buildBestEffortInstruction(
+    userMessage: string,
+    preferResearch: boolean,
+): string {
+    const safeRequest = userMessage.trim() || "Proceed with the latest request.";
+    const guidance = preferResearch
+        ? "Start with a quick research pass to resolve unknowns, then produce concrete next steps or implementation output."
+        : "If details are underspecified, pick sensible defaults and continue implementation.";
+
+    return [
+        `User request: ${safeRequest}`,
+        "Proceed now with best-effort assumptions.",
+        "Do not ask the user a clarifying question unless there is no actionable objective at all.",
+        guidance,
+    ].join(" ");
+}
+
 function normalizeDecision(input: Record<string, unknown>): DirectorDecision | null {
     const status = String(input.status ?? "").trim().toLowerCase();
     const summary = String(input.summary ?? "").trim();
@@ -172,18 +308,49 @@ function normalizeDecision(input: Record<string, unknown>): DirectorDecision | n
     if (!summary) return null;
     if (!["continue", "complete", "needs_user_input", "blocked"].includes(status)) return null;
 
-    const decision: DirectorDecision = {
-        status: status as DirectorDecision["status"],
+    const readStringField = (key: string): string => (
+        typeof input[key] === "string" ? String(input[key]).trim() : ""
+    );
+
+    if (status === "continue") {
+        const targetAgentId = readStringField("targetAgentId");
+        const instruction = readStringField("instruction");
+        if (!targetAgentId || !instruction) return null;
+        return {
+            status: "continue",
+            summary,
+            targetAgentId,
+            instruction,
+        };
+    }
+
+    if (status === "complete") {
+        const responseToUser = readStringField("responseToUser");
+        if (!responseToUser) return null;
+        return {
+            status: "complete",
+            summary,
+            responseToUser,
+        };
+    }
+
+    if (status === "needs_user_input") {
+        const userQuestion = readStringField("userQuestion");
+        if (!userQuestion) return null;
+        return {
+            status: "needs_user_input",
+            summary,
+            userQuestion,
+        };
+    }
+
+    const blockerReason = readStringField("blockerReason");
+    if (!blockerReason) return null;
+    return {
+        status: "blocked",
         summary,
+        blockerReason,
     };
-
-    if (typeof input.targetAgentId === "string") decision.targetAgentId = input.targetAgentId;
-    if (typeof input.instruction === "string") decision.instruction = input.instruction;
-    if (typeof input.responseToUser === "string") decision.responseToUser = input.responseToUser;
-    if (typeof input.userQuestion === "string") decision.userQuestion = input.userQuestion;
-    if (typeof input.blockerReason === "string") decision.blockerReason = input.blockerReason;
-
-    return decision;
 }
 
 function defaultModelForProvider(providerId: string): string {
@@ -203,12 +370,51 @@ function hasProviderApiKey(apiKeys: AgentApiKeys, providerId: string): boolean {
     return typeof value === "string" && value.trim().length > 0;
 }
 
+function isResponseFormatSupportError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    return normalized.includes("response_format")
+        || normalized.includes("json_schema")
+        || normalized.includes("structured output")
+        || normalized.includes("strict")
+        || normalized.includes("schema");
+}
+
+function truncateForDebug(input: string, maxLength: number = 2500): string {
+    if (input.length <= maxLength) return input;
+    const suffix = `... [truncated ${input.length - maxLength} chars]`;
+    return `${input.slice(0, maxLength)}${suffix}`;
+}
+
+function normalizeWhitespaceForDebug(input: string): string {
+    return input.replace(/\s+/g, " ").trim();
+}
+
+function errorToDebugString(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    return String(error);
+}
+
+function isGroqStrictOrchestratorModel(modelId: string): boolean {
+    const normalized = modelId.trim().toLowerCase();
+    return normalized === "gpt-oss-20b"
+        || normalized === "gpt-oss-120b"
+        || normalized === "openai/gpt-oss-20b"
+        || normalized === "openai/gpt-oss-120b";
+}
+
 export class SquadOrchestrator {
     constructor(
         private readonly availableAgents: AgentConfig[],
         private readonly availableTools: Tool[],
         private readonly apiKeys: AgentApiKeys,
+        private readonly debugLog?: OrchestratorDebugLogFn,
     ) { }
+
+    private emitDebug(message: string, data?: unknown): void {
+        if (!this.debugLog) return;
+        this.debugLog(message, data);
+    }
 
     private resolveOrchestratorProfile(
         config: SquadConfig,
@@ -234,9 +440,12 @@ export class SquadOrchestrator {
             || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider;
 
         const modelFromWorkers = workers.find((agent) => (agent.provider || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.provider) === resolvedProvider)?.model;
-        const resolvedModel = configured.model
+        const requestedModel = configured.model
             || modelFromWorkers
             || defaultModelForProvider(resolvedProvider);
+        const resolvedModel = resolvedProvider === "groq"
+            ? (isGroqStrictOrchestratorModel(requestedModel) ? requestedModel : GROQ_STRICT_ORCHESTRATOR_DEFAULT_MODEL)
+            : requestedModel;
 
         return {
             name: configured.name || DEFAULT_SQUAD_ORCHESTRATOR_PROFILE.name,
@@ -261,6 +470,95 @@ export class SquadOrchestrator {
         return { config: normalized, workers, orchestrator };
     }
 
+    private supportsDirectorStrictJson(runtime: SquadRuntime): boolean {
+        const providerId = (runtime.orchestrator.provider || "").trim().toLowerCase();
+        // Groq supports strict JSON schema mode where available; attempt it for all Groq models
+        // and rely on runtime fallback when a specific model rejects response_format.
+        return providerId === "groq";
+    }
+
+    private getDirectorResponseFormat(runtime: SquadRuntime): LLMResponseFormat | undefined {
+        if (!this.supportsDirectorStrictJson(runtime)) {
+            const providerId = (runtime.orchestrator.provider || "").trim().toLowerCase();
+            if (providerId === "openai") {
+                return { type: "json_object" };
+            }
+            return undefined;
+        }
+
+        return {
+            type: "json_schema",
+            json_schema: {
+                name: "squad_orchestrator_director_decision",
+                strict: true,
+                schema: DIRECTOR_DECISION_RESPONSE_SCHEMA,
+            },
+        };
+    }
+
+    private async runDirectorChat(
+        llm: LLMClient,
+        runtime: SquadRuntime,
+        messages: LLMMessage[],
+        options: LLMChatOptions,
+    ): Promise<LLMResponse> {
+        const responseFormat = this.getDirectorResponseFormat(runtime);
+        this.emitDebug("Orchestrator director LLM request", {
+            provider: runtime.orchestrator.provider,
+            model: runtime.orchestrator.model,
+            responseFormat: responseFormat?.type || "none",
+            strictJsonRequested: Boolean(
+                responseFormat
+                && responseFormat.type === "json_schema"
+                && responseFormat.json_schema.strict === true,
+            ),
+            messageCount: messages.length,
+            maxTokens: options.max_tokens ?? null,
+            temperature: options.temperature ?? null,
+        });
+        if (!responseFormat) {
+            return llm.chat(messages, options);
+        }
+
+        try {
+            return await llm.chat(messages, {
+                ...options,
+                responseFormat,
+            });
+        } catch (error: unknown) {
+            if (!isResponseFormatSupportError(error)) {
+                throw error;
+            }
+            this.emitDebug("Orchestrator response_format request rejected; retrying with fallback", {
+                provider: runtime.orchestrator.provider,
+                model: runtime.orchestrator.model,
+                requestedResponseFormat: responseFormat.type,
+                error: errorToDebugString(error),
+            });
+
+            // If strict schema failed, attempt JSON object mode before dropping response_format.
+            if (responseFormat.type === "json_schema") {
+                try {
+                    return await llm.chat(messages, {
+                        ...options,
+                        responseFormat: { type: "json_object" },
+                    });
+                } catch (fallbackError: unknown) {
+                    if (!isResponseFormatSupportError(fallbackError)) {
+                        throw fallbackError;
+                    }
+                    this.emitDebug("Orchestrator json_object fallback rejected; retrying without response_format", {
+                        provider: runtime.orchestrator.provider,
+                        model: runtime.orchestrator.model,
+                        error: errorToDebugString(fallbackError),
+                    });
+                }
+            }
+
+            return llm.chat(messages, options);
+        }
+    }
+
     private getDirectorPrompt(runtime: SquadRuntime): string {
         const interaction = getSquadInteractionConfig(runtime.config);
         const goal = getSquadGoal(runtime.config);
@@ -273,6 +571,10 @@ export class SquadOrchestrator {
             const capabilitySummary = capabilities.length > 0 ? capabilities.join(", ") : "none";
             return `- ${agent.id}: ${agent.name} (${agent.role}, style=${style}) | Tools: ${tools} | Capabilities: ${capabilitySummary}`;
         }).join("\n");
+        const workerIds = runtime.workers
+            .map((agent) => (agent.id || "").trim())
+            .filter((id): id is string => id.length > 0)
+            .join(", ");
 
         const interactionInstructions = interaction.mode === "live_campaign"
             ? [
@@ -309,6 +611,8 @@ ${context || "No extra context provided."}
 You route work to specialist workers and decide when the user should act.
 Available worker agents:
 ${workers}
+Valid targetAgentId values (exact match only):
+${workerIds || "(none)"}
 
 Execution strategy:
 1. Choose the most relevant worker for the current subproblem.
@@ -334,9 +638,13 @@ Return ONLY valid JSON with this exact schema:
 Rules:
 1. Choose status="continue" when a worker should act next.
 2. Choose status="complete" only when the user-ready output is done.
-3. Choose status="needs_user_input" only when missing info or user choice is truly required.
-4. Choose status="blocked" only for hard constraints.
-5. Never assign work to yourself.
+3. If the objective is clear but details are missing, choose status="continue" and proceed with reasonable assumptions.
+4. Choose status="needs_user_input" only when there is no actionable objective (for example, greeting/small talk with no task).
+5. If uncertainty is factual and a web-research worker exists, route to that worker instead of asking the user.
+6. Choose status="blocked" only for hard constraints.
+7. Never assign work to yourself.
+8. If status="continue", targetAgentId must be exactly one id from "Valid targetAgentId values".
+9. Output exactly one JSON object only. No prose, no markdown, no code fences, no JavaScript string concatenation.
 
 Interaction constraints:
 ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
@@ -370,33 +678,226 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
             `Completed worker outputs:\n${toStringArray(workLog)}`,
         ].join("\n\n");
 
-        const raw = await llm.chat(
+        this.emitDebug("Orchestrator preparing director decision context", {
+            userMessagePreview: truncateForDebug(userMessage, 500),
+            historyMessages: history.length,
+            workLogEntries: workLog.length,
+            provider: runtime.orchestrator.provider,
+            model: runtime.orchestrator.model,
+            strictJsonEligible: this.supportsDirectorStrictJson(runtime),
+        });
+
+        const raw = await this.runDirectorChat(
+            llm,
+            runtime,
             [
                 { role: "system", content: this.getDirectorPrompt(runtime) },
                 { role: "user", content: contextPayload },
             ],
             { max_tokens: 1200, temperature: 0.2 },
         );
+        this.emitDebug("Orchestrator raw decision payload received", {
+            contentLength: raw.content.length,
+            newlineCount: (raw.content.match(/\n/g) || []).length,
+            contentPreview: truncateForDebug(normalizeWhitespaceForDebug(raw.content), 1000),
+        });
 
         const parsed = extractJsonObject(raw.content);
         if (!parsed) {
-            return {
-                status: "blocked",
-                summary: "Orchestrator returned invalid orchestration JSON.",
-                blockerReason: "Failed to parse orchestrator decision payload.",
-            };
+            this.emitDebug("Orchestrator decision parse failed", {
+                reason: "extractJsonObject returned null",
+                rawPayloadPreview: truncateForDebug(normalizeWhitespaceForDebug(raw.content), 1000),
+            });
+            const corrected = await this.requestDirectorCorrection(
+                llm,
+                runtime,
+                contextPayload,
+                raw.content || "",
+                "Failed to parse decision payload into a JSON object.",
+            );
+            return corrected;
         }
+        this.emitDebug("Orchestrator parsed decision payload", parsed);
 
         const normalized = normalizeDecision(parsed);
         if (!normalized) {
+            this.emitDebug("Orchestrator decision schema validation failed", {
+                parsedPayload: parsed,
+                reason: "normalizeDecision returned null",
+            });
+            const corrected = await this.requestDirectorCorrection(
+                llm,
+                runtime,
+                contextPayload,
+                raw.content || "",
+                "Missing required decision fields or status-specific schema fields.",
+            );
+            return corrected;
+        }
+
+        const runtimeValidationError = this.getDirectorDecisionRuntimeValidationError(runtime, normalized);
+        if (runtimeValidationError) {
+            this.emitDebug("Orchestrator decision runtime validation failed", {
+                validationError: runtimeValidationError,
+                decision: normalized,
+            });
+            const corrected = await this.requestDirectorCorrection(
+                llm,
+                runtime,
+                contextPayload,
+                raw.content || "",
+                runtimeValidationError,
+            );
+            return corrected;
+        }
+
+        this.emitDebug("Orchestrator decision accepted", normalized);
+        return normalized;
+    }
+
+    private getDirectorDecisionRuntimeValidationError(
+        runtime: SquadRuntime,
+        decision: DirectorDecision,
+    ): string | null {
+        if (decision.status !== "continue") return null;
+
+        const targetAgentId = (decision.targetAgentId || "").trim();
+        const workerIds = new Set(
+            runtime.workers
+                .map((worker) => (worker.id || "").trim())
+                .filter((id): id is string => id.length > 0),
+        );
+
+        if (!workerIds.has(targetAgentId)) {
+            return `Invalid targetAgentId '${targetAgentId}'. Must exactly match a known worker id.`;
+        }
+
+        const instruction = (decision.instruction || "").trim();
+        if (!instruction) {
+            return "Missing instruction for status=continue.";
+        }
+
+        return null;
+    }
+
+    private async requestDirectorCorrection(
+        llm: ReturnType<Agent["getLLMClient"]>,
+        runtime: SquadRuntime,
+        contextPayload: string,
+        invalidDecisionText: string,
+        errorReason: string,
+    ): Promise<DirectorDecision> {
+        const allowedIds = runtime.workers
+            .map((worker) => (worker.id || "").trim())
+            .filter((id): id is string => id.length > 0);
+        const correctionPrompt = [
+            "The previous orchestration JSON is invalid and must be corrected.",
+            `Validation error: ${errorReason}`,
+            `Allowed targetAgentId values (exact): ${allowedIds.join(", ") || "(none)"}`,
+            "Do not return prose, markdown, code fences, or JavaScript string concatenation.",
+            "Return exactly one JSON object that begins with '{' and ends with '}'.",
+            "Return corrected JSON only, using the exact required schema.",
+        ].join("\n");
+        this.emitDebug("Orchestrator requesting correction", {
+            errorReason,
+            invalidDecisionPreview: truncateForDebug(normalizeWhitespaceForDebug(invalidDecisionText), 1000),
+            allowedTargetAgentIds: allowedIds,
+        });
+
+        const correctedRaw = await this.runDirectorChat(
+            llm,
+            runtime,
+            [
+                { role: "system", content: this.getDirectorPrompt(runtime) },
+                { role: "user", content: contextPayload },
+                { role: "assistant", content: invalidDecisionText },
+                { role: "user", content: correctionPrompt },
+            ],
+            { max_tokens: 1200, temperature: 0.1 },
+        );
+        this.emitDebug("Orchestrator raw correction payload received", {
+            contentLength: correctedRaw.content.length,
+            newlineCount: (correctedRaw.content.match(/\n/g) || []).length,
+            contentPreview: truncateForDebug(normalizeWhitespaceForDebug(correctedRaw.content), 1000),
+        });
+
+        const correctedParsed = extractJsonObject(correctedRaw.content);
+        if (!correctedParsed) {
+            this.emitDebug("Orchestrator correction parse failed", {
+                reason: "extractJsonObject returned null",
+                rawPayloadPreview: truncateForDebug(normalizeWhitespaceForDebug(correctedRaw.content), 1000),
+            });
             return {
                 status: "blocked",
-                summary: "Orchestrator decision schema was invalid.",
-                blockerReason: "Missing required decision fields.",
+                summary: "Orchestrator correction payload was invalid JSON.",
+                blockerReason: errorReason,
+            };
+        }
+        this.emitDebug("Orchestrator parsed correction payload", correctedParsed);
+
+        const correctedDecision = normalizeDecision(correctedParsed);
+        if (!correctedDecision) {
+            this.emitDebug("Orchestrator correction schema validation failed", {
+                parsedPayload: correctedParsed,
+                reason: "normalizeDecision returned null",
+            });
+            return {
+                status: "blocked",
+                summary: "Orchestrator correction payload failed schema validation.",
+                blockerReason: errorReason,
             };
         }
 
-        return normalized;
+        const correctedValidationError = this.getDirectorDecisionRuntimeValidationError(runtime, correctedDecision);
+        if (correctedValidationError) {
+            this.emitDebug("Orchestrator correction runtime validation failed", {
+                validationError: correctedValidationError,
+                decision: correctedDecision,
+            });
+            return {
+                status: "blocked",
+                summary: "Orchestrator correction payload failed runtime validation.",
+                blockerReason: correctedValidationError,
+            };
+        }
+
+        this.emitDebug("Orchestrator correction accepted", correctedDecision);
+        return correctedDecision;
+    }
+
+    private applyBestEffortDecisionFallback(
+        runtime: SquadRuntime,
+        userMessage: string,
+        decision: DirectorDecision,
+        workLog: string[],
+    ): DirectorDecision {
+        if (decision.status !== "needs_user_input") {
+            return decision;
+        }
+
+        if (hasNoActionableObjective(userMessage)) {
+            return decision;
+        }
+
+        const uncertaintyText = `${decision.summary} ${decision.userQuestion || ""}`.toLowerCase();
+        const uncertaintySignals = /(more information|missing info|unclear|unknown|details|requirements|preferences|target platform)/;
+        const hasResearchWorker = runtime.workers.some((worker) => hasWebResearchCapability(worker));
+        const preferResearch = hasResearchWorker && (
+            workLog.length === 0
+            || uncertaintySignals.test(uncertaintyText)
+        );
+
+        const fallbackWorker = selectBestEffortWorker(runtime, userMessage, preferResearch);
+        if (!fallbackWorker || !fallbackWorker.id) {
+            return decision;
+        }
+
+        return {
+            status: "continue",
+            summary: "Proceeding with best-effort execution instead of requesting more user input.",
+            targetAgentId: fallbackWorker.id,
+            instruction: buildBestEffortInstruction(userMessage, preferResearch),
+        };
     }
 
     private buildWorkerTask(
@@ -460,9 +961,12 @@ ${writeConstraint}`;
         history: Message[],
         userMessage: string,
         onStep?: (step: SquadRunStep, stepsSnapshot: SquadRunStep[]) => void | Promise<void>,
+        options?: SquadRunOptions,
     ): Promise<SquadRunResult> {
         const runtime = this.getRuntime(config);
         const interaction = getSquadInteractionConfig(runtime.config);
+        const toolAccessMode: AccessPermissionMode = runtime.config.accessMode === "full_access" ? "full_access" : "ask_always";
+        const toolAccessGranted = options?.toolAccessGranted === true;
         const steps: SquadRunStep[] = [];
         const workLog: string[] = [];
         const maxIterations = Math.max(1, runtime.config.maxIterations || DEFAULT_MAX_ITERATIONS);
@@ -472,7 +976,8 @@ ${writeConstraint}`;
         };
 
         for (let iteration = 1; iteration <= maxIterations; iteration++) {
-            const decision = await this.getDirectorDecision(runtime, userMessage, history, workLog);
+            const directorDecision = await this.getDirectorDecision(runtime, userMessage, history, workLog);
+            const decision = this.applyBestEffortDecisionFallback(runtime, userMessage, directorDecision, workLog);
             const step: SquadRunStep = { iteration, directorDecision: decision };
 
             if (decision.status === "complete") {
@@ -522,6 +1027,30 @@ ${writeConstraint}`;
             }
 
             const workerAgent = new Agent(worker);
+            const workerRunId = uuidv4();
+            const subAgentRuntime = new SubAgentRuntime({
+                availableAgents: this.availableAgents,
+                availableTools: this.availableTools,
+                apiKeys: this.apiKeys,
+                currentAgentId: worker.id,
+                currentAgentName: worker.name,
+                parentRunId: workerRunId,
+                parentExecutionContext: {
+                    squadId: runtime.config.id,
+                    squadName: runtime.config.name,
+                    runId: workerRunId,
+                    toolAccessMode,
+                    toolAccessGranted,
+                },
+            });
+            const workerExecutionContext = {
+                squadId: runtime.config.id,
+                squadName: runtime.config.name,
+                runId: workerRunId,
+                toolAccessMode,
+                toolAccessGranted,
+                ...subAgentRuntime.createExecutionContext(),
+            };
             const task = this.buildWorkerTask(runtime, userMessage, decision.instruction, workLog, worker);
             const workerHistory: Message[] = [
                 ...history.slice(-8),
@@ -537,10 +1066,7 @@ ${writeConstraint}`;
                 workerHistory,
                 this.apiKeys,
                 this.availableTools,
-                {
-                    squadId: runtime.config.id,
-                    squadName: runtime.config.name,
-                },
+                workerExecutionContext,
             );
             let workerOutput = workerReply.content.trim();
             let workerToolExecution = workerReply.toolExecution ?? {
@@ -576,10 +1102,7 @@ ${writeConstraint}`;
                     retryHistory,
                     this.apiKeys,
                     this.availableTools,
-                    {
-                        squadId: runtime.config.id,
-                        squadName: runtime.config.name,
-                    },
+                    workerExecutionContext,
                 );
                 workerOutput = retryReply.content.trim();
                 workerToolExecution = retryReply.toolExecution ?? {

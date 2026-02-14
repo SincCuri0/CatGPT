@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useSettings } from "@/hooks/useSettings";
-import { AgentConfig, AgentStyle } from "@/lib/core/Agent";
+import { AccessPermissionMode, AgentConfig, AgentStyle } from "@/lib/core/Agent";
 import { SquadConfig, SquadRunStep, getSquadGoal, getSquadInteractionConfig, normalizeSquadConfig } from "@/lib/core/Squad";
 import { Message } from "@/lib/core/types";
 import { SettingsModal } from "@/components/SettingsModal";
@@ -20,12 +21,19 @@ import {
   parseBlueprintText,
   serializeBlueprintForShare,
 } from "@/lib/squads/blueprints";
-import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Users, ListTree, ChevronDown, ChevronRight, Check, BookTemplate, Download, BookmarkPlus } from "lucide-react";
+import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Users, ListTree, ChevronDown, ChevronRight, Check, BookTemplate, Download, BookmarkPlus, Wrench, Brain } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { getAgentPersonality } from "@/lib/agentPersonality";
 import { DEFAULT_REASONING_EFFORT, PROVIDERS, REASONING_EFFORT_OPTIONS } from "@/lib/llm/constants";
 import type { ReasoningEffort } from "@/lib/llm/types";
-import { buildFallbackCatalogProviders, defaultModelForCatalogProvider, isModelChatCapable, supportsReasoningEffort } from "@/lib/llm/modelCatalog";
+import {
+  buildFallbackCatalogProviders,
+  defaultModelForCatalogProvider,
+  defaultModelForProviderWithRequirements,
+  isModelChatCapable,
+  supportsReasoningEffort,
+  supportsToolUse,
+} from "@/lib/llm/modelCatalog";
 import {
   Conversation,
   ConversationAgentOverrides,
@@ -39,6 +47,11 @@ import {
 } from "@/lib/conversations";
 import { debugClientError, debugClientLog } from "@/lib/debug/client";
 import { useModelCatalog } from "@/hooks/useModelCatalog";
+import { useUserSettings } from "@/hooks/useUserSettings";
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  clampSidebarWidth,
+} from "@/lib/settings/schema";
 
 const TEMPLATE_AGENTS = defaultAgents as AgentConfig[];
 const TEMPLATE_DEFAULT_AGENT =
@@ -55,7 +68,24 @@ const SQUAD_BLUEPRINTS_STORAGE_KEY = "cat_gpt_squad_blueprints";
 const DEFAULT_CHAT_AGENT_OPTION_VALUE = "__default_agent__";
 const ACTIVE_SQUAD_OPTION_VALUE = "__active_squad__";
 const VALID_AGENT_STYLES = new Set<AgentStyle>(["assistant", "character", "expert", "custom"]);
-const ALLOWED_TOOL_IDS = new Set(["web_search", "fs_read", "fs_write", "shell_execute"]);
+const ALLOWED_TOOL_IDS = new Set([
+  "web_search",
+  "fs_read",
+  "fs_write",
+  "fs_list",
+  "shell_execute",
+  "mcp_all",
+  "sessions_spawn",
+  "sessions_await",
+  "sessions_list",
+  "sessions_cancel",
+]);
+const PRIVILEGED_TOOL_IDS = new Set([
+  "fs_write",
+  "shell_execute",
+  "write_file",
+  "execute_command",
+]);
 const FALLBACK_LLM_CATALOG = buildFallbackCatalogProviders();
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
@@ -69,6 +99,10 @@ const SLASH_COMMANDS: SlashCommandOption[] = [
   {
     command: "/create_cats",
     description: "Generate one or more new agents from a natural-language request.",
+  },
+  {
+    command: "/create_squad",
+    description: "Generate a new squad (with squad-only agents) from a natural-language request.",
   },
 ];
 
@@ -149,6 +183,21 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
+const normalizeAccessMode = (value: unknown): AccessPermissionMode => (
+  value === "full_access" ? "full_access" : "ask_always"
+);
+
+const hasPrivilegedToolCapability = (tools?: string[]): boolean => (
+  Array.isArray(tools) && tools.some((toolId) => (
+    PRIVILEGED_TOOL_IDS.has(toolId)
+    || toolId === "mcp_all"
+  ))
+);
+
+const hasAnyToolCapability = (tools?: string[]): boolean => (
+  Array.isArray(tools) && tools.length > 0
+);
+
 const getModelBadges = (model: {
   capabilities?: {
     chat?: boolean;
@@ -192,8 +241,13 @@ const resolveDefaultAgentId = (agentList: AgentConfig[]): string | null => {
   return agentList[0]?.id || null;
 };
 
+const normalizeAgentConfig = (agent: AgentConfig): AgentConfig => ({
+  ...agent,
+  accessMode: normalizeAccessMode(agent.accessMode),
+});
+
 const ensureDefaultAgentPresent = (agentList: AgentConfig[]): AgentConfig[] => {
-  const list = [...agentList];
+  const list = agentList.map((agent) => normalizeAgentConfig(agent));
   if (!TEMPLATE_DEFAULT_AGENT) return list;
 
   const templateId = TEMPLATE_DEFAULT_AGENT.id;
@@ -215,7 +269,7 @@ const ensureDefaultAgentPresent = (agentList: AgentConfig[]): AgentConfig[] => {
     }
   }
 
-  return [TEMPLATE_DEFAULT_AGENT, ...list];
+  return [normalizeAgentConfig(TEMPLATE_DEFAULT_AGENT), ...list];
 };
 
 const resolveRequiredDefaultAgentId = (agentList: AgentConfig[]): string => (
@@ -262,6 +316,11 @@ const buildSquadOrchestratorAgent = (squad: SquadConfig): AgentConfig => {
 export default function CEODashboard() {
   const { apiKey, apiKeys, serverConfiguredKeys, debugLogsEnabled } = useSettings();
   const { providers: modelCatalogProviders } = useModelCatalog();
+  const {
+    settings: userSettings,
+    isLoaded: hasLoadedUserSettings,
+    updateSettings: updateUserSettings,
+  } = useUserSettings();
   const llmProviders = modelCatalogProviders.length > 0 ? modelCatalogProviders : FALLBACK_LLM_CATALOG;
   const initialAgents = ensureDefaultAgentPresent(TEMPLATE_AGENTS);
   const [agents, setAgents] = useState<AgentConfig[]>(initialAgents);
@@ -294,6 +353,8 @@ export default function CEODashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [masterLogNow, setMasterLogNow] = useState(() => Date.now());
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState<string | null>(null);
   const [squadMenuOpen, setSquadMenuOpen] = useState<string | null>(null);
   const [chatMenuOpen, setChatMenuOpen] = useState<string | null>(null);
@@ -307,6 +368,15 @@ export default function CEODashboard() {
   const [draftAgentOverrides, setDraftAgentOverrides] = useState<ConversationAgentOverrides | null>(null);
   const [savedSquadBlueprints, setSavedSquadBlueprints] = useState<SquadBlueprintDefinition[]>([]);
   const chatSelectorMenuRef = useRef<HTMLDivElement | null>(null);
+  const agentCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const agentMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  const squadCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const squadMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  const sidebarResizeStartXRef = useRef(0);
+  const sidebarResizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
+  const hasInitializedSidebarWidthRef = useRef(false);
+  const [agentMenuPosition, setAgentMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [squadMenuPosition, setSquadMenuPosition] = useState<{ top: number; left: number } | null>(null);
 
   // Load agents on mount
   useEffect(() => {
@@ -355,7 +425,7 @@ export default function CEODashboard() {
 
     try {
       const parsed = JSON.parse(storedSquadAgents) as AgentConfig[];
-      setSquadAgents(Array.isArray(parsed) ? parsed : []);
+      setSquadAgents(Array.isArray(parsed) ? parsed.map((agent) => normalizeAgentConfig(agent)) : []);
     } catch {
       setSquadAgents([]);
     }
@@ -476,6 +546,156 @@ export default function CEODashboard() {
     };
   }, [chatSelectorMenuOpen]);
 
+  const updateAgentMenuPosition = useCallback((agentId: string | null) => {
+    if (!agentId || typeof window === "undefined") {
+      setAgentMenuPosition(null);
+      return;
+    }
+
+    const row = agentCardRefs.current[agentId];
+    if (!row) {
+      setAgentMenuPosition(null);
+      return;
+    }
+
+    const rect = row.getBoundingClientRect();
+    const gap = 8;
+    const menuWidth = 180;
+    const menuHeight = 84;
+    const viewportPadding = 8;
+
+    let left = rect.right + gap;
+    if (left + menuWidth > window.innerWidth - viewportPadding) {
+      left = Math.max(viewportPadding, rect.left - menuWidth - gap);
+    }
+
+    let top = rect.top;
+    if (top + menuHeight > window.innerHeight - viewportPadding) {
+      top = Math.max(viewportPadding, window.innerHeight - menuHeight - viewportPadding);
+    }
+
+    setAgentMenuPosition({
+      left: Math.round(left),
+      top: Math.round(top),
+    });
+  }, []);
+
+  const updateSquadMenuPosition = useCallback((squadId: string | null) => {
+    if (!squadId || typeof window === "undefined") {
+      setSquadMenuPosition(null);
+      return;
+    }
+
+    const row = squadCardRefs.current[squadId];
+    if (!row) {
+      setSquadMenuPosition(null);
+      return;
+    }
+
+    const rect = row.getBoundingClientRect();
+    const gap = 8;
+    const menuWidth = 220;
+    const menuHeight = 144;
+    const viewportPadding = 8;
+
+    let left = rect.right + gap;
+    if (left + menuWidth > window.innerWidth - viewportPadding) {
+      left = Math.max(viewportPadding, rect.left - menuWidth - gap);
+    }
+
+    let top = rect.top;
+    if (top + menuHeight > window.innerHeight - viewportPadding) {
+      top = Math.max(viewportPadding, window.innerHeight - menuHeight - viewportPadding);
+    }
+
+    setSquadMenuPosition({
+      left: Math.round(left),
+      top: Math.round(top),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!agentMenuOpen) {
+      setAgentMenuPosition(null);
+      return;
+    }
+
+    const sync = () => updateAgentMenuPosition(agentMenuOpen);
+    sync();
+
+    window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    return () => {
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true);
+    };
+  }, [agentMenuOpen, sidebarWidth, updateAgentMenuPosition]);
+
+  useEffect(() => {
+    if (!squadMenuOpen) {
+      setSquadMenuPosition(null);
+      return;
+    }
+
+    const sync = () => updateSquadMenuPosition(squadMenuOpen);
+    sync();
+
+    window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    return () => {
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true);
+    };
+  }, [squadMenuOpen, sidebarWidth, updateSquadMenuPosition]);
+
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (agentMenuPanelRef.current?.contains(target)) return;
+      const row = agentCardRefs.current[agentMenuOpen];
+      if (row?.contains(target)) return;
+      setAgentMenuOpen(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAgentMenuOpen(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [agentMenuOpen]);
+
+  useEffect(() => {
+    if (!squadMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (squadMenuPanelRef.current?.contains(target)) return;
+      const row = squadCardRefs.current[squadMenuOpen];
+      if (row?.contains(target)) return;
+      setSquadMenuOpen(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSquadMenuOpen(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [squadMenuOpen]);
+
   useEffect(() => {
     if (!isProcessing) {
       setMasterLogNow(Date.now());
@@ -491,15 +711,104 @@ export default function CEODashboard() {
     };
   }, [isProcessing]);
 
+  useEffect(() => {
+    if (!hasLoadedUserSettings) return;
+    if (isResizingSidebar) return;
+    if (hasInitializedSidebarWidthRef.current) return;
+    setSidebarWidth(userSettings.ui.sidebarWidth);
+    hasInitializedSidebarWidthRef.current = true;
+  }, [hasLoadedUserSettings, isResizingSidebar, userSettings.ui.sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const delta = event.clientX - sidebarResizeStartXRef.current;
+      const nextWidth = clampSidebarWidth(sidebarResizeStartWidthRef.current + delta);
+      setSidebarWidth(nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (!hasLoadedUserSettings) return;
+    if (isResizingSidebar) return;
+    if (sidebarWidth === userSettings.ui.sidebarWidth) return;
+
+    const timer = window.setTimeout(() => {
+      void updateUserSettings({
+        ui: {
+          sidebarWidth,
+        },
+      });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    hasLoadedUserSettings,
+    isResizingSidebar,
+    sidebarWidth,
+    updateUserSettings,
+    userSettings.ui.sidebarWidth,
+  ]);
+
   const saveAgents = (newAgents: AgentConfig[]) => {
-    const normalizedAgents = ensureDefaultAgentPresent(newAgents);
+    const normalizeRuntimeAgentConfig = (agent: AgentConfig): AgentConfig => {
+      const normalized = normalizeAgentConfig(agent);
+      const providerId = (normalized.provider || DEFAULT_PROVIDER_ID).trim().toLowerCase();
+      const tools = Array.isArray(normalized.tools) ? normalized.tools : [];
+      const modelId = resolveCompatibleRuntimeModel(providerId, normalized.model, tools);
+      const requestedReasoning = normalizeReasoningEffort(normalized.reasoningEffort || DEFAULT_REASONING_EFFORT);
+      const reasoningEffort = supportsReasoningEffort(providerId, modelId) ? requestedReasoning : "none";
+      return {
+        ...normalized,
+        provider: providerId,
+        model: modelId,
+        reasoningEffort,
+        tools,
+      };
+    };
+    const normalizedAgents = ensureDefaultAgentPresent(newAgents).map((agent) => normalizeRuntimeAgentConfig(agent));
     setAgents(normalizedAgents);
     localStorage.setItem(CHAT_AGENTS_STORAGE_KEY, JSON.stringify(normalizedAgents));
   };
 
   const saveSquadAgents = (newAgents: AgentConfig[]) => {
-    setSquadAgents(newAgents);
-    localStorage.setItem(SQUAD_AGENTS_STORAGE_KEY, JSON.stringify(newAgents));
+    const normalizedAgents = newAgents.map((agent) => {
+      const normalized = normalizeAgentConfig(agent);
+      const providerId = (normalized.provider || DEFAULT_PROVIDER_ID).trim().toLowerCase();
+      const tools = Array.isArray(normalized.tools) ? normalized.tools : [];
+      const modelId = resolveCompatibleRuntimeModel(providerId, normalized.model, tools);
+      const requestedReasoning = normalizeReasoningEffort(normalized.reasoningEffort || DEFAULT_REASONING_EFFORT);
+      const reasoningEffort = supportsReasoningEffort(providerId, modelId) ? requestedReasoning : "none";
+      return {
+        ...normalized,
+        provider: providerId,
+        model: modelId,
+        reasoningEffort,
+        tools,
+      };
+    });
+    setSquadAgents(normalizedAgents);
+    localStorage.setItem(SQUAD_AGENTS_STORAGE_KEY, JSON.stringify(normalizedAgents));
   };
 
   const saveSquads = (newSquads: SquadConfig[]) => {
@@ -631,10 +940,31 @@ export default function CEODashboard() {
   const isSupportedRuntimeProvider = (providerId: string): boolean => (
     llmProviders.some((provider) => provider.id === providerId)
   );
-  const defaultRuntimeModelForProvider = (providerId: string): string => {
+  const defaultRuntimeModelForProvider = (
+    providerId: string,
+    requirements?: { requireToolUse?: boolean; requireReasoning?: boolean },
+  ): string => {
     const provider = llmProviders.find((candidate) => candidate.id === providerId);
     if (!provider) return defaultModelForProvider(providerId);
-    return defaultModelForCatalogProvider(provider);
+    const needsCapabilityModel = Boolean(requirements?.requireToolUse || requirements?.requireReasoning);
+    return needsCapabilityModel
+      ? defaultModelForProviderWithRequirements(provider, requirements)
+      : defaultModelForCatalogProvider(provider);
+  };
+  const resolveCompatibleRuntimeModel = (
+    providerId: string,
+    requestedModel: string | undefined,
+    tools?: string[],
+  ): string => {
+    const requireToolUse = hasAnyToolCapability(tools);
+    const fallbackModel = defaultRuntimeModelForProvider(providerId, { requireToolUse });
+    const candidate = (requestedModel || "").trim();
+    if (!candidate) return fallbackModel;
+
+    const chatCapable = isModelChatCapable({ id: candidate }, providerId);
+    if (!chatCapable) return fallbackModel;
+    if (requireToolUse && !supportsToolUse(providerId, candidate)) return fallbackModel;
+    return candidate;
   };
 
   const resolveCreateCatsProvider = (
@@ -725,6 +1055,59 @@ export default function CEODashboard() {
     }
   };
 
+  const makeUniqueSquadName = (requestedName: string, takenNames: Set<string>): string => {
+    const baseName = requestedName.trim() || "New Squad";
+    if (!takenNames.has(baseName.toLowerCase())) {
+      takenNames.add(baseName.toLowerCase());
+      return baseName;
+    }
+
+    let suffix = 2;
+    while (true) {
+      const candidate = `${baseName} ${suffix}`;
+      const normalized = candidate.toLowerCase();
+      if (!takenNames.has(normalized)) {
+        takenNames.add(normalized);
+        return candidate;
+      }
+      suffix += 1;
+    }
+  };
+
+  const buildSquadNameFromPrompt = (prompt: string): string => {
+    const cleaned = prompt.trim().replace(/^["']+|["']+$/g, "");
+    if (!cleaned) return "New Squad";
+
+    const words = cleaned
+      .replace(/[^a-zA-Z0-9\s-]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    if (words.length === 0) return "New Squad";
+
+    const leadingIntentVerbs = new Set([
+      "build",
+      "create",
+      "make",
+      "develop",
+      "design",
+      "ship",
+      "plan",
+      "launch",
+      "write",
+    ]);
+    const coreWords = words.length > 2 && leadingIntentVerbs.has(words[0].toLowerCase())
+      ? words.slice(1)
+      : words;
+    const title = coreWords
+      .slice(0, 4)
+      .map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase())
+      .join(" ");
+
+    if (!title) return "New Squad";
+    if (title.toLowerCase().endsWith(" squad")) return title;
+    return `${title} Squad`;
+  };
+
   const executeCreateCatsCommand = async (
     prompt: string,
     preferredProvider?: string,
@@ -809,12 +1192,20 @@ export default function CEODashboard() {
       const resolvedProvider = isSupportedRuntimeProvider(providerId)
         ? providerId
         : provider;
+      const tools = Array.isArray(generated.tools)
+        ? generated.tools
+          .filter((tool): tool is string => typeof tool === "string")
+          .map((tool) => tool.trim())
+          .filter((tool) => Boolean(tool) && ALLOWED_TOOL_IDS.has(tool))
+        : [];
       const requestedModel = (typeof generated.model === "string" && generated.model.trim())
         ? generated.model.trim()
         : "";
-      const resolvedModel = requestedModel || defaultRuntimeModelForProvider(resolvedProvider);
-      const modelIsChatCapable = isModelChatCapable({ id: resolvedModel }, resolvedProvider);
-      const safeModel = modelIsChatCapable ? resolvedModel : defaultRuntimeModelForProvider(resolvedProvider);
+      const safeModel = resolveCompatibleRuntimeModel(
+        resolvedProvider,
+        requestedModel || undefined,
+        tools,
+      );
       const resolvedReasoningEffort = typeof generated.reasoningEffort === "string"
         ? normalizeReasoningEffort(generated.reasoningEffort)
         : reasoningEffort;
@@ -833,12 +1224,6 @@ export default function CEODashboard() {
       const voiceId = (typeof generated.voiceId === "string" && generated.voiceId.trim())
         ? generated.voiceId.trim()
         : DEFAULT_VOICE_ID;
-      const tools = Array.isArray(generated.tools)
-        ? generated.tools
-          .filter((tool): tool is string => typeof tool === "string")
-          .map((tool) => tool.trim())
-          .filter((tool) => Boolean(tool) && ALLOWED_TOOL_IDS.has(tool))
-        : [];
 
       return {
         id: uuidv4(),
@@ -852,6 +1237,7 @@ export default function CEODashboard() {
         reasoningEffort: safeReasoningEffort,
         voiceId,
         tools,
+        accessMode: "ask_always",
       };
     });
 
@@ -877,21 +1263,115 @@ export default function CEODashboard() {
     };
   };
 
+  const executeCreateSquadsCommand = async (
+    prompt: string,
+    preferredProvider?: string,
+    preferredModel?: string,
+    preferredReasoningEffort?: ReasoningEffort,
+  ): Promise<CreateCatsExecutionResult> => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) {
+      return {
+        role: "assistant",
+        content: "What should the new squad accomplish? Describe the goal and the specialist cats you want.",
+        createdAgents: [],
+      };
+    }
+
+    const creationResult = await executeCreateCatsCommand(
+      trimmedPrompt,
+      preferredProvider,
+      preferredModel,
+      preferredReasoningEffort,
+      "squad",
+    );
+    if (creationResult.createdAgents.length === 0) {
+      return creationResult;
+    }
+
+    const takenSquadNames = new Set(
+      squads
+        .map((squad) => (squad.name || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const squadName = makeUniqueSquadName(buildSquadNameFromPrompt(trimmedPrompt), takenSquadNames);
+    const memberIds = creationResult.createdAgents
+      .map((agent) => agent.id)
+      .filter((id): id is string => Boolean(id));
+
+    const firstCreatedAgent = creationResult.createdAgents[0];
+    const orchestratorCompatibility = resolveImportProviderModel(
+      firstCreatedAgent?.provider || preferredProvider || DEFAULT_PROVIDER_ID,
+      firstCreatedAgent?.model || preferredModel,
+    );
+    const createdSquad = normalizeSquadConfig({
+      id: uuidv4(),
+      name: squadName,
+      goal: trimmedPrompt,
+      mission: trimmedPrompt,
+      context: "",
+      members: memberIds,
+      maxIterations: 6,
+      accessMode: "ask_always",
+      orchestrator: {
+        name: "OR",
+        provider: orchestratorCompatibility.provider,
+        model: orchestratorCompatibility.model,
+        style: "assistant",
+        voiceId: DEFAULT_VOICE_ID,
+      },
+    });
+
+    saveSquads([...squads, createdSquad]);
+    setSelectedSquadId(createdSquad.id || null);
+    setSelectedAgentId(resolveRequiredDefaultAgentId(agents));
+    setDraftAgentOverrides(null);
+
+    const createdList = creationResult.createdAgents
+      .map((agent) => `- **${agent.name}** (${agent.role})`)
+      .join("\n");
+
+    return {
+      role: "assistant",
+      content: [
+        `Created squad **${createdSquad.name}** with ${creationResult.createdAgents.length} new squad cat${creationResult.createdAgents.length > 1 ? "s" : ""}.`,
+        "",
+        `Goal: ${getSquadGoal(createdSquad)}`,
+        "",
+        "Members:",
+        createdList,
+      ].join("\n"),
+      createdAgents: creationResult.createdAgents,
+    };
+  };
+
   const executeSlashCommand = async (
     command: ParsedSlashCommand,
     targetAgent?: AgentConfig,
     targetSquad?: SquadConfig,
   ): Promise<{ role: "assistant" | "system"; content: string }> => {
-    if (command.name === "/create_cats") {
-      const squadAnchor = targetSquad
-        ? getSquadWorkerAgents(targetSquad, squadAgents)[0]
-        : undefined;
+    const squadAnchor = targetSquad
+      ? getSquadWorkerAgents(targetSquad, squadAgents)[0]
+      : undefined;
+    const providerHint = targetAgent?.provider || targetSquad?.orchestrator?.provider || squadAnchor?.provider;
+    const modelHint = targetAgent?.model || targetSquad?.orchestrator?.model || squadAnchor?.model;
+    const reasoningHint = targetAgent?.reasoningEffort || squadAnchor?.reasoningEffort;
 
+    if (command.name === "/create_cats") {
       return executeCreateCatsCommand(
         command.args,
-        targetAgent?.provider || targetSquad?.orchestrator?.provider || squadAnchor?.provider,
-        targetAgent?.model || targetSquad?.orchestrator?.model || squadAnchor?.model,
-        targetAgent?.reasoningEffort || squadAnchor?.reasoningEffort,
+        providerHint,
+        modelHint,
+        reasoningHint,
+      );
+    }
+
+    if (command.name === "/create_squad") {
+      return executeCreateSquadsCommand(
+        command.args,
+        providerHint,
+        modelHint,
+        reasoningHint,
       );
     }
 
@@ -1061,6 +1541,7 @@ export default function CEODashboard() {
           provider: compatibility.provider,
           model: compatibility.model,
           reasoningEffort: compatibility.reasoningEffort ?? agent.reasoningEffort,
+          accessMode: normalizeAccessMode(agent.accessMode),
         };
       });
 
@@ -1319,6 +1800,10 @@ export default function CEODashboard() {
   };
 
   const handleSelectModelForAgent = (agentId: string, providerId: string, modelId: string) => {
+    const requiresToolUse = hasAnyToolCapability(modelSelectionAgent?.tools);
+    if (requiresToolUse && !supportsToolUse(providerId, modelId)) {
+      return;
+    }
     const current = resolveCurrentChatOverrides();
     const supportsReasoning = supportsReasoningEffort(providerId, modelId);
     persistChatOverrides({
@@ -1364,7 +1849,11 @@ export default function CEODashboard() {
 
   const handleUpsertSquadAgent = (agent: AgentConfig) => {
     const id = agent.id || uuidv4();
-    const normalizedAgent: AgentConfig = { ...agent, id };
+    const normalizedAgent: AgentConfig = {
+      ...agent,
+      id,
+      accessMode: normalizeAccessMode(agent.accessMode),
+    };
     const exists = squadAgents.some((candidate) => candidate.id === id);
     saveSquadAgents(
       exists
@@ -1627,10 +2116,27 @@ export default function CEODashboard() {
         return;
       }
 
+      const effectiveAccessMode: AccessPermissionMode = isSquadMode
+        ? normalizeAccessMode(targetSquad?.accessMode)
+        : normalizeAccessMode(effectiveAgent?.accessMode);
+      const hasPrivilegedToolsInScope = isSquadMode && targetSquad
+        ? getSquadWorkerAgents(targetSquad, squadAgents)
+          .some((agent) => hasPrivilegedToolCapability(agent.tools))
+        : hasPrivilegedToolCapability(effectiveAgent?.tools);
+      let toolAccessGranted = effectiveAccessMode === "full_access";
+      if (effectiveAccessMode === "ask_always" && hasPrivilegedToolsInScope) {
+        toolAccessGranted = window.confirm(
+          "This run may use file writes or shell commands. Allow privileged tool access for this turn?\n\nOK = allow once\nCancel = continue in read-only mode",
+        );
+      }
+
       debugClientLog("page", "Requesting /api/chat", {
         isSquadMode,
         historyCount: requestHistory.length,
         messageLength: messageText.length,
+        accessMode: effectiveAccessMode,
+        privilegedToolsInScope: hasPrivilegedToolsInScope,
+        toolAccessGranted,
       });
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -1644,9 +2150,10 @@ export default function CEODashboard() {
         body: JSON.stringify({
           message: messageText,
           history: requestHistory,
+          toolAccessGranted,
           ...(isSquadMode
             ? { squadConfig: targetSquad, agents: squadAgents }
-            : { agentConfig: effectiveAgent })
+            : { agentConfig: effectiveAgent, agents })
         })
       });
       debugClientLog("page", "Received /api/chat response", { ok: response.ok, status: response.status, isSquadMode });
@@ -1990,15 +2497,23 @@ export default function CEODashboard() {
     ),
   );
   const userAgents = agents.filter((agent) => agent.id !== SYSTEM_DEFAULT_AGENT_ID);
+  const openAgentMenuAgent = agentMenuOpen
+    ? userAgents.find((agent) => agent.id === agentMenuOpen) || null
+    : null;
+  const openSquadMenuSquad = squadMenuOpen
+    ? squads.find((squad) => squad.id === squadMenuOpen) || null
+    : null;
   const providerById = new Map(llmProviders.map((provider) => [provider.id, provider]));
   const runtimeActiveChatAgent: AgentConfig | null = (() => {
     if (!effectiveActiveChatAgent) return null;
 
     const providerId = (effectiveActiveChatAgent.provider || DEFAULT_PROVIDER_ID).trim().toLowerCase();
-    const provider = providerById.get(providerId);
-    const fallbackModel = provider ? defaultModelForCatalogProvider(provider) : defaultRuntimeModelForProvider(providerId);
+    const requireToolUse = hasAnyToolCapability(effectiveActiveChatAgent.tools);
+    const fallbackModel = defaultRuntimeModelForProvider(providerId, { requireToolUse });
     const modelCandidate = String(effectiveActiveChatAgent.model || "").trim();
-    const modelId = modelCandidate && isModelChatCapable({ id: modelCandidate }, providerId)
+    const modelId = modelCandidate
+      && isModelChatCapable({ id: modelCandidate }, providerId)
+      && (!requireToolUse || supportsToolUse(providerId, modelCandidate))
       ? modelCandidate
       : fallbackModel;
     const requestedReasoning = normalizeReasoningEffort(
@@ -2015,25 +2530,25 @@ export default function CEODashboard() {
       reasoningEffort,
     };
   })();
+  const modelSelectionAgent = activeConversationAgent
+    || ((activeConversationSquad || selectedSquad) ? null : (selectedAgent || defaultAgent || null));
+  const modelSelectionRequiresToolUse = hasAnyToolCapability(modelSelectionAgent?.tools);
   const modelSelectionProviders = llmProviders
     .filter((provider) => hasProviderKeyConfigured(provider.id))
     .map((provider) => ({
       ...provider,
-      models: provider.models.filter((model) => isModelChatCapable(model, provider.id)),
+      models: provider.models.filter((model) => {
+        const isChatModel = isModelChatCapable(model, provider.id);
+        if (!isChatModel) return false;
+        if (!modelSelectionRequiresToolUse) return true;
+        return model.capabilities?.nativeTools ?? supportsToolUse(provider.id, model.id);
+      }),
     }))
     .filter((provider) => provider.models.length > 0);
-  const modelSelectionAgent = activeConversationAgent
-    || ((activeConversationSquad || selectedSquad) ? null : (selectedAgent || defaultAgent || null));
   const displayedProviderId = (runtimeActiveChatAgent?.provider || DEFAULT_PROVIDER_ID).toLowerCase();
   const displayedProvider = providerById.get(displayedProviderId);
   const displayedModelId = runtimeActiveChatAgent?.model || displayedProvider?.defaultModel || DEFAULT_MODEL_ID;
   const displayedModelLabel = displayedProvider?.models.find((model) => model.id === displayedModelId)?.label || displayedModelId;
-  const displayedProviderLabel = displayedProvider?.name || displayedProviderId;
-  const displayedReasoningEffort = normalizeReasoningEffort(
-    runtimeActiveChatAgent?.reasoningEffort || DEFAULT_REASONING_EFFORT,
-  );
-  const displayedReasoningLabel = REASONING_EFFORT_OPTIONS.find((option) => option.id === displayedReasoningEffort)?.label
-    || displayedReasoningEffort;
   const selectedModelProviderId = (activeChatOverrides?.provider || modelSelectionAgent?.provider || DEFAULT_PROVIDER_ID).toLowerCase();
   const selectedModelProvider = modelSelectionProviders.find((provider) => provider.id === selectedModelProviderId)
     || modelSelectionProviders[0];
@@ -2093,12 +2608,21 @@ export default function CEODashboard() {
     return "text-[#7aa2f7] bg-[#7aa2f7]/10 border-[#7aa2f7]/20";
   };
 
+  const handleSidebarResizeStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!sidebarOpen) return;
+    event.preventDefault();
+    sidebarResizeStartXRef.current = event.clientX;
+    sidebarResizeStartWidthRef.current = sidebarWidth;
+    setIsResizingSidebar(true);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#212121] text-[#ececec] font-sans">
 
       {/* Sidebar - Collapsible */}
       <div
-        className={`${sidebarOpen ? "w-[260px]" : "w-0"} bg-[#171717] flex flex-col transition-all duration-300 ease-in-out overflow-hidden border-r border-white/5 relative z-30`}
+        className={`${sidebarOpen ? "shrink-0" : "w-0"} bg-[#171717] flex flex-col overflow-hidden border-r border-white/5 md:border-r-0 relative z-30 ${sidebarOpen && !isResizingSidebar ? "transition-[width] duration-300 ease-in-out" : ""}`}
+        style={sidebarOpen ? { width: `${sidebarWidth}px` } : undefined}
       >
         {/* New Chat Button Area */}
         <div className="p-3 pb-0">
@@ -2133,9 +2657,26 @@ export default function CEODashboard() {
             {userAgents.map(agent => {
               const isSelected = !selectedSquadId && selectedAgentId === agent.id;
               const personality = getAgentPersonality(agent);
+              const providerId = (agent.provider || DEFAULT_PROVIDER_ID).trim().toLowerCase();
+              const modelId = (agent.model || defaultModelForProvider(providerId)).trim();
+              const toolsEnabled = Array.isArray(agent.tools) && agent.tools.length > 0;
+              const reasoningEnabled = supportsReasoningEffort(providerId, modelId)
+                && normalizeReasoningEffort(agent.reasoningEffort) !== "none";
 
               return (
-                <div key={agent.id} className="relative">
+                <div
+                  key={agent.id}
+                  className="relative"
+                  ref={(node) => {
+                    const id = agent.id || "";
+                    if (!id) return;
+                    if (node) {
+                      agentCardRefs.current[id] = node;
+                    } else {
+                      delete agentCardRefs.current[id];
+                    }
+                  }}
+                >
                   <button
                     onClick={() => handleSelectAgent(agent.id || "")}
                     className={`agent-card w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm group relative overflow-hidden ${isSelected
@@ -2170,12 +2711,27 @@ export default function CEODashboard() {
                       </div>
                     </div>
 
-                    {/* Hover tools paw prints (shown when menu is closed) */}
-                    {agent.tools && agent.tools.length > 0 && agentMenuOpen !== agent.id && (
-                      <div className="flex gap-0.5">
-                        {agent.tools.slice(0, 3).map((_, i) => (
-                          <span key={i} className="tool-paw text-[10px]">🐾</span>
-                        ))}
+                    {/* Capability icons */}
+                    {(toolsEnabled || reasoningEnabled) && (
+                      <div className="flex items-center gap-1.5 text-[#8e8ea0]">
+                        {toolsEnabled && (
+                          <span
+                            className="inline-flex items-center justify-center"
+                            title="Tools enabled"
+                            aria-label="Tools enabled"
+                          >
+                            <Wrench size={12} />
+                          </span>
+                        )}
+                        {reasoningEnabled && (
+                          <span
+                            className="inline-flex items-center justify-center"
+                            title="Reasoning enabled"
+                            aria-label="Reasoning enabled"
+                          >
+                            <Brain size={12} />
+                          </span>
+                        )}
                       </div>
                     )}
 
@@ -2188,7 +2744,11 @@ export default function CEODashboard() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setSquadMenuOpen(null);
-                          setAgentMenuOpen(agentMenuOpen === agent.id ? null : (agent.id || null));
+                          const nextMenuId = agentMenuOpen === agent.id ? null : (agent.id || null);
+                          setAgentMenuOpen(nextMenuId);
+                          if (nextMenuId) {
+                            window.requestAnimationFrame(() => updateAgentMenuPosition(nextMenuId));
+                          }
                         }}
                         className="p-1 rounded hover:bg-[#424242] transition-colors cursor-pointer"
                       >
@@ -2197,33 +2757,6 @@ export default function CEODashboard() {
                     </div>
                   </button>
 
-                  {/* Dropdown Menu */}
-                  {agentMenuOpen === agent.id && (
-                    <div className="absolute left-11 top-full mt-1 bg-[#2f2f2f] border border-white/10 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150 min-w-[180px]">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingAgent(agent);
-                          setIsHiringOpen(true);
-                          setAgentMenuOpen(null);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
-                      >
-                        <Pencil size={12} />
-                        <span>Edit Cat</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteAgent(agent);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
-                      >
-                        <Trash2 size={12} />
-                        <span>Release into the Wild</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -2264,7 +2797,19 @@ export default function CEODashboard() {
               const memberCount = getSquadWorkerAgents(normalizeSquadConfig(squad), squadAgents).length;
 
               return (
-                <div key={squad.id} className="relative group">
+                <div
+                  key={squad.id}
+                  className="relative group"
+                  ref={(node) => {
+                    const id = squad.id || "";
+                    if (!id) return;
+                    if (node) {
+                      squadCardRefs.current[id] = node;
+                    } else {
+                      delete squadCardRefs.current[id];
+                    }
+                  }}
+                >
                   <button
                     onClick={() => handleSelectSquad(squad.id || "")}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${isSelected
@@ -2290,7 +2835,11 @@ export default function CEODashboard() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setAgentMenuOpen(null);
-                          setSquadMenuOpen(squadMenuOpen === squad.id ? null : (squad.id || null));
+                          const nextMenuId = squadMenuOpen === squad.id ? null : (squad.id || null);
+                          setSquadMenuOpen(nextMenuId);
+                          if (nextMenuId) {
+                            window.requestAnimationFrame(() => updateSquadMenuPosition(nextMenuId));
+                          }
                         }}
                         className="p-1 rounded hover:bg-[#424242] transition-colors cursor-pointer"
                       >
@@ -2299,50 +2848,6 @@ export default function CEODashboard() {
                     </div>
                   </button>
 
-                  {squadMenuOpen === squad.id && (
-                    <div className="absolute left-11 top-full mt-1 bg-[#2f2f2f] border border-white/10 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150 min-w-[220px]">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSaveSquadAsBlueprint(squad);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
-                      >
-                        <BookmarkPlus size={12} />
-                        <span>Save as Blueprint</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleExportSquadBlueprint(squad);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
-                      >
-                        <Download size={12} />
-                        <span>Export Blueprint JSON</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditSquad(squad);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
-                      >
-                        <Pencil size={12} />
-                        <span>Edit Squad</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSquad(squad);
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
-                      >
-                        <Trash2 size={12} />
-                        <span>Disband Squad</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -2487,8 +2992,108 @@ export default function CEODashboard() {
         </div>
       </div>
 
+      {sidebarOpen && (
+        <div
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          onMouseDown={handleSidebarResizeStart}
+          className="hidden md:flex w-2 shrink-0 items-stretch justify-center cursor-col-resize bg-transparent hover:bg-white/5 transition-colors"
+        >
+          <div className={`w-px h-full ${isResizingSidebar ? "bg-white/25" : "bg-white/10"}`} />
+        </div>
+      )}
+
+      {typeof window !== "undefined" && openAgentMenuAgent && agentMenuPosition && createPortal(
+        <div
+          ref={agentMenuPanelRef}
+          className="fixed bg-[#2f2f2f] border border-white/10 rounded-lg shadow-2xl overflow-hidden z-[120] animate-in fade-in slide-in-from-top-1 duration-150 min-w-[180px]"
+          style={{
+            top: `${agentMenuPosition.top}px`,
+            left: `${agentMenuPosition.left}px`,
+          }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingAgent(openAgentMenuAgent);
+              setIsHiringOpen(true);
+              setAgentMenuOpen(null);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
+          >
+            <Pencil size={12} />
+            <span>Edit Cat</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteAgent(openAgentMenuAgent);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <Trash2 size={12} />
+            <span>Release into the Wild</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+
+      {typeof window !== "undefined" && openSquadMenuSquad && squadMenuPosition && createPortal(
+        <div
+          ref={squadMenuPanelRef}
+          className="fixed bg-[#2f2f2f] border border-white/10 rounded-lg shadow-2xl overflow-hidden z-[120] animate-in fade-in slide-in-from-top-1 duration-150 min-w-[220px]"
+          style={{
+            top: `${squadMenuPosition.top}px`,
+            left: `${squadMenuPosition.left}px`,
+          }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSaveSquadAsBlueprint(openSquadMenuSquad);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
+          >
+            <BookmarkPlus size={12} />
+            <span>Save as Blueprint</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleExportSquadBlueprint(openSquadMenuSquad);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
+          >
+            <Download size={12} />
+            <span>Export Blueprint JSON</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditSquad(openSquadMenuSquad);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#ececec] hover:bg-[#424242] transition-colors"
+          >
+            <Pencil size={12} />
+            <span>Edit Squad</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteSquad(openSquadMenuSquad);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <Trash2 size={12} />
+            <span>Disband Squad</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+
       {/* Main Content */}
-      <div className="flex-1 flex flex-col h-full relative bg-[#212121]">
+      <div className="flex-1 min-w-0 flex flex-col h-full relative bg-[#212121]">
 
         {/* Toggle Sidebar Button (Mobile/Desktop) */}
         {!sidebarOpen && (
@@ -2549,11 +3154,10 @@ export default function CEODashboard() {
                   }}
                   className="bg-[#171717]/95 border border-white/10 rounded-lg px-2.5 py-1.5 shadow-lg backdrop-blur-sm flex items-center gap-2 text-left hover:bg-[#1e1e1e] transition-colors"
                 >
-                  <span className="text-[10px] uppercase tracking-wide text-[#8e8ea0]">Chat Cat</span>
                   <div className="max-w-[220px] min-w-0">
                     <div className="text-xs text-[#ececec] truncate">{activeChatCatLabel}</div>
                     <div className="text-[11px] text-[#8e8ea0] truncate">
-                      {displayedProviderLabel} • {displayedModelLabel} • {displayedReasoningLabel}
+                      {displayedModelLabel}
                     </div>
                   </div>
                   <ChevronDown size={14} className={`text-[#8e8ea0] transition-transform ${chatSelectorMenuOpen ? "rotate-180" : ""}`} />

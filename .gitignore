@@ -43,3 +43,5 @@ next-env.d.ts
 /Cats/*
 package-lock.json
 /public/audio/*
+/data/user-settings.json
+/data/subagent-runs.json

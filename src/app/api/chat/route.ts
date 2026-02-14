@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { v4 as uuidv4 } from "uuid";
 import { Agent, AgentApiKeys, AgentConfig } from "@/lib/core/Agent";
 import { Message } from "@/lib/core/types";
 import { toolRegistry } from "@/lib/core/ToolRegistry";
 import { getEnvVariable } from "@/lib/env";
 import { SquadConfig } from "@/lib/core/Squad";
 import { SquadOrchestrator } from "@/lib/core/SquadOrchestrator";
+import { SubAgentRuntime } from "@/lib/core/runtime/SubAgentRuntime";
 import { debugRouteError, debugRouteLog, isDebugRequest } from "@/lib/debug/server";
+import { readUserSettings } from "@/lib/settings/store";
+import { getMcpTools } from "@/lib/mcp/toolAdapter";
 
 // Import tools to ensure they are registered
 import { FileSystemReadTool, FileSystemWriteTool, FileSystemListTool } from "@/lib/tools/computer/file_system";
 import { ShellExecuteTool } from "@/lib/tools/computer/shell";
 import { WebSearchTool } from "@/lib/tools/web/search";
+import { SessionsAwaitTool, SessionsCancelTool, SessionsListTool, SessionsSpawnTool } from "@/lib/tools/agent/sessions";
 
 // Register Tools (Idempotent)
 toolRegistry.register(FileSystemReadTool);
@@ -18,6 +23,10 @@ toolRegistry.register(FileSystemWriteTool);
 toolRegistry.register(FileSystemListTool);
 toolRegistry.register(ShellExecuteTool);
 toolRegistry.register(WebSearchTool);
+toolRegistry.register(SessionsSpawnTool);
+toolRegistry.register(SessionsAwaitTool);
+toolRegistry.register(SessionsListTool);
+toolRegistry.register(SessionsCancelTool);
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
     groq: "GROQ_API_KEY",
@@ -79,12 +88,14 @@ export async function POST(req: NextRequest) {
             agentConfig,
             squadConfig,
             agents = [],
+            toolAccessGranted = false,
         }: {
             message?: string;
             history?: Message[];
             agentConfig?: AgentConfig;
             squadConfig?: SquadConfig;
             agents?: AgentConfig[];
+            toolAccessGranted?: boolean;
         } = body;
 
         if (!message) {
@@ -95,9 +106,18 @@ export async function POST(req: NextRequest) {
             hasSquadConfig: Boolean(squadConfig),
             historyCount: Array.isArray(history) ? history.length : 0,
             messageLength: message.length,
+            toolAccessGranted: toolAccessGranted === true,
         });
 
-        const tools = toolRegistry.getAll();
+        const baseTools = toolRegistry.getAll();
+        let mcpTools = [] as typeof baseTools;
+        try {
+            const settings = await readUserSettings();
+            mcpTools = await getMcpTools(settings.mcp.services);
+        } catch (error: unknown) {
+            debugRouteError(debugEnabled, "api/chat", "Failed to load MCP tools; continuing without MCP.", error);
+        }
+        const tools = [...baseTools, ...mcpTools];
         const normalizedHistory = Array.isArray(history) ? history : [];
         const fullHistory: Message[] = [
             ...normalizedHistory,
@@ -110,7 +130,12 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: "Invalid Request: squad mode requires agents[]" }, { status: 400 });
             }
             debugRouteLog(debugEnabled, "api/chat", "Running squad orchestrator", { agentCount: agents.length });
-            const orchestrator = new SquadOrchestrator(agents, tools, apiKeys as AgentApiKeys);
+            const orchestrator = new SquadOrchestrator(
+                agents,
+                tools,
+                apiKeys as AgentApiKeys,
+                (message, data) => debugRouteLog(debugEnabled, "api/chat", message, data),
+            );
 
             if (wantsSquadStream) {
                 const encoder = new TextEncoder();
@@ -128,6 +153,7 @@ export async function POST(req: NextRequest) {
                                 async (step) => {
                                     send({ type: "squad_step", step });
                                 },
+                                { toolAccessGranted: toolAccessGranted === true },
                             );
                             debugRouteLog(debugEnabled, "api/chat", "Squad stream completed", {
                                 stepCount: Array.isArray(result.steps) ? result.steps.length : 0,
@@ -160,7 +186,13 @@ export async function POST(req: NextRequest) {
                 });
             }
 
-            const result = await orchestrator.run(squadConfig, fullHistory, message);
+            const result = await orchestrator.run(
+                squadConfig,
+                fullHistory,
+                message,
+                undefined,
+                { toolAccessGranted: toolAccessGranted === true },
+            );
             debugRouteLog(debugEnabled, "api/chat", "Squad response completed", {
                 stepCount: Array.isArray(result.steps) ? result.steps.length : 0,
                 status: result.status,
@@ -179,13 +211,37 @@ export async function POST(req: NextRequest) {
         }
 
         const agent = new Agent(agentConfig);
-        const responseMsg = await agent.process(fullHistory, apiKeys, tools);
+        const runId = uuidv4();
+        const runtimeAgents = [agentConfig, ...agents].filter((candidate, index, source) => (
+            source.findIndex((entry) => entry.id === candidate.id && entry.name === candidate.name) === index
+        ));
+        const subAgentRuntime = new SubAgentRuntime({
+            availableAgents: runtimeAgents,
+            availableTools: tools,
+            apiKeys: apiKeys as AgentApiKeys,
+            currentAgentId: agentConfig.id,
+            currentAgentName: agentConfig.name,
+            parentRunId: runId,
+            parentExecutionContext: {
+                runId,
+                toolAccessMode: agentConfig.accessMode === "full_access" ? "full_access" : "ask_always",
+                toolAccessGranted: toolAccessGranted === true,
+            },
+        });
+
+        const responseMsg = await agent.process(fullHistory, apiKeys, tools, {
+            runId,
+            toolAccessMode: agentConfig.accessMode === "full_access" ? "full_access" : "ask_always",
+            toolAccessGranted: toolAccessGranted === true,
+            ...subAgentRuntime.createExecutionContext(),
+        });
         debugRouteLog(debugEnabled, "api/chat", "Single-agent response completed", {
             agentName: agentConfig.name || "unknown",
             responseLength: responseMsg.content.length,
+            runId,
         });
 
-        return NextResponse.json({ response: responseMsg.content });
+        return NextResponse.json({ response: responseMsg.content, runId });
     } catch (error: unknown) {
         debugRouteError(debugEnabled, "api/chat", "Unhandled error in POST", error);
         console.error("Chat API Error:", error);
