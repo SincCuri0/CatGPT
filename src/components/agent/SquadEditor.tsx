@@ -221,7 +221,7 @@ export function SquadEditor({
                             <label className="text-sm font-semibold text-slate-300">Goal</label>
                             <textarea
                                 value={goalValue}
-                                onChange={(e) => setFormData({ ...formData, goal: e.target.value, mission: e.target.value })}
+                                onChange={(e) => setFormData({ ...formData, goal: e.target.value })}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all h-24 resize-none placeholder:text-slate-600"
                                 placeholder="Define the squad objective (e.g., run a fantasy campaign session with responsive turn-taking)."
                             />

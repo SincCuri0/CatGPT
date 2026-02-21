@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useSettings } from "@/hooks/useSettings";
 import { AccessPermissionMode, AgentConfig, AgentStyle } from "@/lib/core/Agent";
@@ -11,6 +11,10 @@ import { AgentEditor } from "@/components/agent/AgentEditor";
 import { SquadEditor } from "@/components/agent/SquadEditor";
 import { SquadBlueprintLibraryModal } from "@/components/agent/SquadBlueprintLibraryModal";
 import { ChatInterface, SlashCommandOption } from "@/components/ChatInterface";
+import { RuntimeInspectorPanel } from "@/components/runtime/RuntimeInspectorPanel";
+import { SkillsModal } from "@/components/SkillsModal";
+import { SchedulerPanel } from "@/components/SchedulerPanel";
+import { MCPAgentManager } from "@/components/MCPAgentManager";
 import defaultAgents from "@/lib/templates/default_agents.json";
 import { DEFAULT_SQUAD_BLUEPRINTS } from "@/lib/templates/default_squad_blueprints";
 import {
@@ -21,7 +25,10 @@ import {
   parseBlueprintText,
   serializeBlueprintForShare,
 } from "@/lib/squads/blueprints";
-import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Users, ListTree, ChevronDown, ChevronRight, Check, BookTemplate, Download, BookmarkPlus, Wrench, Brain } from "lucide-react";
+import { Settings, Plus, PawPrint, MessageSquare, PanelLeftClose, MoreHorizontal, Pencil, Trash2, Clock, Users, ListTree, ChevronDown, ChevronRight, Check, BookTemplate, Download, BookmarkPlus, Wrench, Brain, Sparkles, ArrowDownToLine } from "lucide-react";
+import { ImportModal } from "@/components/import/ImportModal";
+import { HELPER_AGENT, HELPER_AGENT_ID } from "@/lib/templates/helper-agent";
+import { fetchSyncData } from "@/lib/api-client";
 import { v4 as uuidv4 } from "uuid";
 import { getAgentPersonality } from "@/lib/agentPersonality";
 import { DEFAULT_REASONING_EFFORT, PROVIDERS, REASONING_EFFORT_OPTIONS } from "@/lib/llm/constants";
@@ -52,6 +59,8 @@ import {
   DEFAULT_SIDEBAR_WIDTH,
   clampSidebarWidth,
 } from "@/lib/settings/schema";
+import { hasPrivilegedToolCapability as hasPrivilegedToolCapabilityFromIds, normalizeToolIds } from "@/lib/core/tooling/toolIds";
+import { normalizeEvolutionConfig } from "@/lib/evolution/types";
 
 const TEMPLATE_AGENTS = defaultAgents as AgentConfig[];
 const TEMPLATE_DEFAULT_AGENT =
@@ -68,25 +77,8 @@ const SQUAD_BLUEPRINTS_STORAGE_KEY = "cat_gpt_squad_blueprints";
 const DEFAULT_CHAT_AGENT_OPTION_VALUE = "__default_agent__";
 const ACTIVE_SQUAD_OPTION_VALUE = "__active_squad__";
 const VALID_AGENT_STYLES = new Set<AgentStyle>(["assistant", "character", "expert", "custom"]);
-const ALLOWED_TOOL_IDS = new Set([
-  "web_search",
-  "fs_read",
-  "fs_write",
-  "fs_list",
-  "shell_execute",
-  "mcp_all",
-  "sessions_spawn",
-  "sessions_await",
-  "sessions_list",
-  "sessions_cancel",
-]);
-const PRIVILEGED_TOOL_IDS = new Set([
-  "fs_write",
-  "shell_execute",
-  "write_file",
-  "execute_command",
-]);
 const FALLBACK_LLM_CATALOG = buildFallbackCatalogProviders();
+const EVOLUTION_HEARTBEAT_INTERVAL_MS = 60_000;
 
 const PROVIDER_ENV_KEY_MAP: Record<string, string> = {
   groq: "GROQ_API_KEY",
@@ -188,10 +180,7 @@ const normalizeAccessMode = (value: unknown): AccessPermissionMode => (
 );
 
 const hasPrivilegedToolCapability = (tools?: string[]): boolean => (
-  Array.isArray(tools) && tools.some((toolId) => (
-    PRIVILEGED_TOOL_IDS.has(toolId)
-    || toolId === "mcp_all"
-  ))
+  hasPrivilegedToolCapabilityFromIds(tools)
 );
 
 const hasAnyToolCapability = (tools?: string[]): boolean => (
@@ -243,7 +232,9 @@ const resolveDefaultAgentId = (agentList: AgentConfig[]): string | null => {
 
 const normalizeAgentConfig = (agent: AgentConfig): AgentConfig => ({
   ...agent,
+  tools: normalizeToolIds(agent.tools),
   accessMode: normalizeAccessMode(agent.accessMode),
+  evolution: normalizeEvolutionConfig(agent.evolution),
 });
 
 const ensureDefaultAgentPresent = (agentList: AgentConfig[]): AgentConfig[] => {
@@ -314,7 +305,7 @@ const buildSquadOrchestratorAgent = (squad: SquadConfig): AgentConfig => {
 };
 
 export default function CEODashboard() {
-  const { apiKey, apiKeys, serverConfiguredKeys, debugLogsEnabled } = useSettings();
+  const { apiKeys, serverConfiguredKeys, debugLogsEnabled } = useSettings();
   const { providers: modelCatalogProviders } = useModelCatalog();
   const {
     settings: userSettings,
@@ -363,10 +354,22 @@ export default function CEODashboard() {
   const [hasLoadedAgents, setHasLoadedAgents] = useState(false);
   const [hasLoadedSquads, setHasLoadedSquads] = useState(false);
   const [hasLoadedConversations, setHasLoadedConversations] = useState(false);
+
+  // Feature Modals
+  const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
+  const [isSchedulerPanelOpen, setIsSchedulerPanelOpen] = useState(false);
+  const [isMCPManagerOpen, setIsMCPManagerOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [hasImportedData, setHasImportedData] = useState(false);
+
   const [chatSelectorMenuOpen, setChatSelectorMenuOpen] = useState(false);
   const [chatSelectorSubmenu, setChatSelectorSubmenu] = useState<"cat" | "model" | "reasoning" | null>(null);
   const [draftAgentOverrides, setDraftAgentOverrides] = useState<ConversationAgentOverrides | null>(null);
   const [savedSquadBlueprints, setSavedSquadBlueprints] = useState<SquadBlueprintDefinition[]>([]);
+  const [isRunningEvolution, setIsRunningEvolution] = useState(false);
+  const heartbeatRequestInFlightRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const isRunningEvolutionRef = useRef(false);
   const chatSelectorMenuRef = useRef<HTMLDivElement | null>(null);
   const agentCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const agentMenuPanelRef = useRef<HTMLDivElement | null>(null);
@@ -394,6 +397,7 @@ export default function CEODashboard() {
     }
 
     const normalizedAgents = ensureDefaultAgentPresent(loadedAgents);
+
     setAgents(normalizedAgents);
     setSelectedAgentId(resolveRequiredDefaultAgentId(normalizedAgents));
     setSelectedSquadId(null);
@@ -447,27 +451,6 @@ export default function CEODashboard() {
     }
   }, []);
 
-  // Backward compatibility: migrate legacy squad member IDs from chat agents once.
-  useEffect(() => {
-    const hasStoredSquadAgents = Boolean(localStorage.getItem(SQUAD_AGENTS_STORAGE_KEY));
-    if (hasStoredSquadAgents || squadAgents.length > 0) return;
-    if (agents.length === 0 || squads.length === 0) return;
-
-    const legacyMemberIds = new Set(
-      squads.flatMap((squad) => (Array.isArray(squad.members) ? squad.members : [])),
-    );
-    if (legacyMemberIds.size === 0) return;
-
-    const migrated = agents.filter((agent) => {
-      const id = agent.id || "";
-      return legacyMemberIds.has(id);
-    });
-    if (migrated.length === 0) return;
-
-    setSquadAgents(migrated);
-    localStorage.setItem(SQUAD_AGENTS_STORAGE_KEY, JSON.stringify(migrated));
-  }, [agents, squads, squadAgents.length]);
-
   // Warm ElevenLabs voices cache on app load so voice options are ready in editors.
   useEffect(() => {
     try {
@@ -508,6 +491,51 @@ export default function CEODashboard() {
     setConversations(loadConversations().sort((a, b) => b.updatedAt - a.updatedAt));
     setHasLoadedConversations(true);
   }, []);
+
+  // Sync Data from SQLite (Hybrid Integration)
+  useEffect(() => {
+    if (!hasLoadedAgents || !hasLoadedConversations) return;
+
+    // 1. Ensure Helper Agent is present immediately (Robustness against API failure)
+    setAgents((prev) => {
+      if (!prev.find((a) => a.id === HELPER_AGENT_ID)) {
+        return [HELPER_AGENT, ...prev];
+      }
+      return prev;
+    });
+
+    // 2. Fetch Sync Data
+    fetchSyncData()
+      .then((data) => {
+        setHasImportedData(!!data.hasImportedData);
+
+        // Merge synced agents
+        setAgents((prev) => {
+          const next = [...prev];
+          data.agents.forEach((remote) => {
+            const idx = next.findIndex((local) => local.id === remote.id);
+            if (idx === -1) {
+              next.push(remote);
+            }
+          });
+          return next;
+        });
+
+        // Merge Conversations
+        setConversations((prev) => {
+          const next = [...prev];
+          let changed = false;
+          data.conversations.forEach((remote) => {
+            if (!next.find((local) => local.id === remote.id)) {
+              next.push(remote);
+              changed = true;
+            }
+          });
+          return changed ? next.sort((a, b) => b.updatedAt - a.updatedAt) : next;
+        });
+      })
+      .catch((err) => console.error("Sync fetch error:", err));
+  }, [hasLoadedAgents, hasLoadedConversations]);
 
   // Load messages when active conversation changes
   useEffect(() => {
@@ -770,6 +798,14 @@ export default function CEODashboard() {
     userSettings.ui.sidebarWidth,
   ]);
 
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
+  useEffect(() => {
+    isRunningEvolutionRef.current = isRunningEvolution;
+  }, [isRunningEvolution]);
+
   const saveAgents = (newAgents: AgentConfig[]) => {
     const normalizeRuntimeAgentConfig = (agent: AgentConfig): AgentConfig => {
       const normalized = normalizeAgentConfig(agent);
@@ -967,6 +1003,67 @@ export default function CEODashboard() {
     return candidate;
   };
 
+  useEffect(() => {
+    if (!hasAnyApiKeyConfigured) return;
+
+    const scheduledAgents = agents.filter((agent) => {
+      const evolution = normalizeEvolutionConfig(agent.evolution);
+      return evolution.enabled && evolution.schedule.enabled;
+    });
+    if (scheduledAgents.length === 0) return;
+
+    let cancelled = false;
+    const runHeartbeat = async () => {
+      if (cancelled) return;
+      if (heartbeatRequestInFlightRef.current) return;
+      if (isProcessingRef.current || isRunningEvolutionRef.current) return;
+
+      heartbeatRequestInFlightRef.current = true;
+      try {
+        const response = await fetch("/api/evolution/heartbeat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-keys": JSON.stringify(apiKeys),
+            ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
+          },
+          body: JSON.stringify({
+            agents: scheduledAgents,
+          }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Heartbeat failed (${response.status})`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          const runs = Array.isArray(data.runs) ? data.runs : [];
+          if (runs.length > 0) {
+            debugClientLog("page", "Evolution heartbeat executed runs", { runCount: runs.length, runs });
+          }
+        }
+      } catch (error: unknown) {
+        if (!cancelled) {
+          debugClientError("page", error, "Evolution heartbeat failed");
+        }
+      } finally {
+        heartbeatRequestInFlightRef.current = false;
+      }
+    };
+
+    void runHeartbeat();
+    const timer = window.setInterval(() => {
+      void runHeartbeat();
+    }, EVOLUTION_HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [agents, apiKeys, debugLogsEnabled, hasAnyApiKeyConfigured]);
+
   const resolveCreateCatsProvider = (
     preferredProvider?: string,
     preferredModel?: string,
@@ -1132,7 +1229,6 @@ export default function CEODashboard() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-groq-api-key": apiKey || "",
         "x-api-keys": JSON.stringify(apiKeys),
         ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
       },
@@ -1192,12 +1288,7 @@ export default function CEODashboard() {
       const resolvedProvider = isSupportedRuntimeProvider(providerId)
         ? providerId
         : provider;
-      const tools = Array.isArray(generated.tools)
-        ? generated.tools
-          .filter((tool): tool is string => typeof tool === "string")
-          .map((tool) => tool.trim())
-          .filter((tool) => Boolean(tool) && ALLOWED_TOOL_IDS.has(tool))
-        : [];
+      const tools = normalizeToolIds(generated.tools);
       const requestedModel = (typeof generated.model === "string" && generated.model.trim())
         ? generated.model.trim()
         : "";
@@ -1308,11 +1399,10 @@ export default function CEODashboard() {
       id: uuidv4(),
       name: squadName,
       goal: trimmedPrompt,
-      mission: trimmedPrompt,
       context: "",
       members: memberIds,
-      maxIterations: 6,
-      accessMode: "ask_always",
+      maxIterations: 12,
+      accessMode: "full_access",
       orchestrator: {
         name: "OR",
         provider: orchestratorCompatibility.provider,
@@ -1531,21 +1621,21 @@ export default function CEODashboard() {
       const normalizedImportedAgents = importedAgents.map((agent) => {
         const preferredProvider = agent.provider || importedSquad.orchestrator?.provider || DEFAULT_PROVIDER_ID;
         const preferredModel = agent.model || importedSquad.orchestrator?.model;
-        const compatibility = resolveImportProviderModel(
+        const resolvedRuntimeProfile = resolveImportProviderModel(
           preferredProvider,
           preferredModel,
           agent.reasoningEffort,
         );
         return {
           ...agent,
-          provider: compatibility.provider,
-          model: compatibility.model,
-          reasoningEffort: compatibility.reasoningEffort ?? agent.reasoningEffort,
+          provider: resolvedRuntimeProfile.provider,
+          model: resolvedRuntimeProfile.model,
+          reasoningEffort: resolvedRuntimeProfile.reasoningEffort ?? agent.reasoningEffort,
           accessMode: normalizeAccessMode(agent.accessMode),
         };
       });
 
-      const orchestratorCompatibility = resolveImportProviderModel(
+      const resolvedOrchestratorRuntimeProfile = resolveImportProviderModel(
         importedSquad.orchestrator?.provider || normalizedImportedAgents[0]?.provider || DEFAULT_PROVIDER_ID,
         importedSquad.orchestrator?.model,
       );
@@ -1553,8 +1643,8 @@ export default function CEODashboard() {
         ...importedSquad,
         orchestrator: {
           ...importedSquad.orchestrator,
-          provider: orchestratorCompatibility.provider,
-          model: orchestratorCompatibility.model,
+          provider: resolvedOrchestratorRuntimeProfile.provider,
+          model: resolvedOrchestratorRuntimeProfile.model,
         },
       });
 
@@ -2085,6 +2175,7 @@ export default function CEODashboard() {
     let latestMessagesState = updatedMessages;
     let latestTraceState = existingTrace;
 
+    isProcessingRef.current = true;
     setIsProcessing(true);
 
     try {
@@ -2142,7 +2233,6 @@ export default function CEODashboard() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-groq-api-key": apiKey || "",
           "x-api-keys": JSON.stringify(apiKeys),
           ...(isSquadMode ? { "x-squad-stream": "1" } : {}),
           ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
@@ -2411,6 +2501,7 @@ export default function CEODashboard() {
       });
       refreshConversations();
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -2446,7 +2537,19 @@ export default function CEODashboard() {
     return groups;
   };
 
-  const conversationGroups = groupConversations(conversations);
+  // -- SQUAD FILTERING LOGIC --
+  // If a Squad is selected, show ONLY that Squad's conversations.
+  // If NO Squad is selected, show conversations that do NOT belong to any Squad.
+  const visibleConversations = useMemo(() => {
+    if (selectedSquadId) {
+      return conversations.filter(c => c.agentId === selectedSquadId);
+    }
+    // When in main view, exclude conversations that link to a Squad
+    const squadIds = new Set(squads.map(s => s.id));
+    return conversations.filter(c => !squadIds.has(c.agentId));
+  }, [conversations, selectedSquadId, squads]);
+
+  const conversationGroups = groupConversations(visibleConversations);
   const defaultAgentId = resolveRequiredDefaultAgentId(agents);
   const defaultAgent = defaultAgentId ? agents.find((agent) => agent.id === defaultAgentId) : undefined;
   const activeConversation = activeConversationId
@@ -2599,6 +2702,87 @@ export default function CEODashboard() {
   const isLiveRunActive = Boolean(isProcessing && latestTraceTurn && latestTraceTurn.status === "in_progress");
   const liveStepCount = latestTraceTurn?.steps.length || 0;
   const liveElapsed = latestTraceTurn ? formatElapsed(masterLogNow - latestTraceTurn.timestamp) : "0s";
+  const activeEvolution = runtimeActiveChatAgent && !selectedSquad
+    ? normalizeEvolutionConfig(runtimeActiveChatAgent.evolution)
+    : null;
+  const canRunEvolutionNow = Boolean(activeEvolution?.enabled && runtimeActiveChatAgent && !selectedSquad);
+
+  const handleRunEvolutionNow = async () => {
+    if (!runtimeActiveChatAgent || selectedSquad) return;
+    const evolutionConfig = normalizeEvolutionConfig(runtimeActiveChatAgent.evolution);
+    if (!evolutionConfig.enabled) return;
+    if (isProcessing || isRunningEvolution) return;
+
+    isRunningEvolutionRef.current = true;
+    setIsRunningEvolution(true);
+    try {
+      const response = await fetch("/api/evolution/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-keys": JSON.stringify(apiKeys),
+          ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
+        },
+        body: JSON.stringify({
+          agentConfig: runtimeActiveChatAgent,
+          agents,
+          prompt: evolutionConfig.schedule.prompt,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || `Autonomy run failed (${response.status})`);
+      }
+
+      const responseText = typeof data.response === "string" ? data.response : "";
+      const autonomyMessage = createAgentAssistantMessage(
+        responseText.trim().length > 0
+          ? `[Autonomy Run]\n\n${responseText}`
+          : "[Autonomy Run] Completed.",
+        runtimeActiveChatAgent,
+        runtimeActiveChatAgent.name || "Assistant",
+        { suppressAutoPlay: true },
+      );
+
+      const finalMessages = [...currentMessages, autonomyMessage];
+      setCurrentMessages(finalMessages);
+
+      let convId = activeConversationId;
+      if (!convId) {
+        convId = uuidv4();
+        setActiveConversationId(convId);
+      }
+
+      const existingConversation = conversations.find((conversation) => conversation.id === convId);
+      const conversation: Conversation = {
+        id: convId,
+        agentId: runtimeActiveChatAgent.id || selectedAgentId || defaultAgentId,
+        title: existingConversation?.title || `${runtimeActiveChatAgent.name} autonomy`,
+        messages: finalMessages,
+        squadTrace: existingConversation?.squadTrace || currentSquadTrace,
+        agentOverrides: selectedSquad ? undefined : (activeChatOverrides || undefined),
+        createdAt: existingConversation?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      upsertConversation(conversation);
+      refreshConversations();
+      debugClientLog("page", "Autonomy run completed", {
+        agentId: runtimeActiveChatAgent.id,
+        responseLength: responseText.length,
+      });
+    } catch (error: unknown) {
+      debugClientError("page", error, "Autonomy run failed");
+      const message = error instanceof Error ? error.message : "Autonomy run failed.";
+      const failureMessage = createSystemMessage(`Autonomy run failed. ${message}`);
+      const finalMessages = [...currentMessages, failureMessage];
+      setCurrentMessages(finalMessages);
+    } finally {
+      isRunningEvolutionRef.current = false;
+      setIsRunningEvolution(false);
+    }
+  };
 
   const getTraceStatusColor = (status: SquadTraceTurn["status"]) => {
     if (status === "in_progress") return "text-[#7aa2f7] bg-[#7aa2f7]/10 border-[#7aa2f7]/20";
@@ -2662,6 +2846,7 @@ export default function CEODashboard() {
               const toolsEnabled = Array.isArray(agent.tools) && agent.tools.length > 0;
               const reasoningEnabled = supportsReasoningEffort(providerId, modelId)
                 && normalizeReasoningEffort(agent.reasoningEffort) !== "none";
+              const evolutionEnabled = normalizeEvolutionConfig(agent.evolution).enabled;
 
               return (
                 <div
@@ -2712,7 +2897,7 @@ export default function CEODashboard() {
                     </div>
 
                     {/* Capability icons */}
-                    {(toolsEnabled || reasoningEnabled) && (
+                    {(toolsEnabled || reasoningEnabled || evolutionEnabled) && (
                       <div className="flex items-center gap-1.5 text-[#8e8ea0]">
                         {toolsEnabled && (
                           <span
@@ -2730,6 +2915,15 @@ export default function CEODashboard() {
                             aria-label="Reasoning enabled"
                           >
                             <Brain size={12} />
+                          </span>
+                        )}
+                        {evolutionEnabled && (
+                          <span
+                            className="inline-flex items-center justify-center text-[#10a37f]"
+                            title="Self-evolving mode enabled"
+                            aria-label="Self-evolving mode enabled"
+                          >
+                            <Sparkles size={12} />
                           </span>
                         )}
                       </div>
@@ -2981,10 +3175,38 @@ export default function CEODashboard() {
         </div>
 
         {/* User Profile at Bottom */}
-        <div className="mt-auto p-3 border-t border-white/5">
+        <div className="mt-auto p-3 border-t border-white/5 space-y-2">
+          {/* Feature Buttons */}
+          <button
+            onClick={() => setIsSkillsModalOpen(true)}
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-[#212121] transition-colors text-sm text-left group"
+            title="Import and manage reusable skills"
+          >
+            <div className="flex-1 truncate font-medium text-[#ececec]">Skills</div>
+            <Wrench size={16} className="text-[#8e8ea0] group-hover:text-white transition-colors" />
+          </button>
+
+          <button
+            onClick={() => setIsSchedulerPanelOpen(true)}
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-[#212121] transition-colors text-sm text-left group"
+            title="Schedule autonomous agent runs"
+          >
+            <div className="flex-1 truncate font-medium text-[#ececec]">Scheduler</div>
+            <Clock size={16} className="text-[#8e8ea0] group-hover:text-white transition-colors" />
+          </button>
+
+          <button
+            onClick={() => setIsMCPManagerOpen(true)}
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-[#212121] transition-colors text-sm text-left group"
+            title="Manage agent network and MCP"
+          >
+            <div className="flex-1 truncate font-medium text-[#ececec]">Network</div>
+            <Brain size={16} className="text-[#8e8ea0] group-hover:text-white transition-colors" />
+          </button>
+
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="flex items-center gap-3 w-full px-3 py-3 rounded-lg hover:bg-[#212121] transition-colors text-sm text-left group"
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-[#212121] transition-colors text-sm text-left group"
           >
             <div className="flex-1 truncate font-medium text-[#ececec]">API Settings</div>
             <Settings size={16} className="text-[#8e8ea0] group-hover:text-white transition-colors" />
@@ -3038,6 +3260,8 @@ export default function CEODashboard() {
         </div>,
         document.body,
       )}
+
+
 
       {typeof window !== "undefined" && openSquadMenuSquad && squadMenuPosition && createPortal(
         <div
@@ -3142,7 +3366,18 @@ export default function CEODashboard() {
           )}
 
           {showChatAgentSelector && (
-            <div className="absolute top-4 left-16 md:left-4 z-50">
+            <div className="absolute top-4 left-16 md:left-4 z-50 flex flex-col gap-2">
+              {/* Import Button for Helper Agent */}
+              {(activeConversationAgent?.id === HELPER_AGENT_ID || activeChatAgent?.id === HELPER_AGENT_ID) && !hasImportedData && (
+                <button
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="bg-[#10a37f] border border-[#10a37f]/50 text-white rounded-lg px-2.5 py-1.5 shadow-lg flex items-center gap-2 hover:bg-[#1a7f64] transition-colors animate-pulse"
+                >
+                  <ArrowDownToLine size={14} />
+                  <span className="text-xs font-bold">Import Data</span>
+                </button>
+              )}
+
               <div ref={chatSelectorMenuRef} className="relative">
                 <button
                   onClick={() => {
@@ -3308,6 +3543,21 @@ export default function CEODashboard() {
                   </div>
                 )}
               </div>
+
+              {canRunEvolutionNow && (
+                <button
+                  type="button"
+                  onClick={() => void handleRunEvolutionNow()}
+                  disabled={isProcessing || isRunningEvolution}
+                  className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-medium shadow-lg backdrop-blur-sm transition-colors ${isProcessing || isRunningEvolution
+                    ? "bg-[#171717]/95 border-white/10 text-[#8e8ea0] cursor-not-allowed"
+                    : "bg-[#171717]/95 border-[#10a37f]/40 text-[#9cf4da] hover:bg-[#1f1f1f] hover:border-[#10a37f]"
+                    }`}
+                >
+                  <Brain size={13} />
+                  {isRunningEvolution ? "Evolving..." : "Evolve Now"}
+                </button>
+              )}
             </div>
           )}
 
@@ -3418,8 +3668,43 @@ export default function CEODashboard() {
         </div>
       </div>
 
+      {debugLogsEnabled && (
+        <RuntimeInspectorPanel
+          activeAgentId={runtimeActiveChatAgent?.id || null}
+          debugLogsEnabled={debugLogsEnabled}
+        />
+      )}
+
       {/* Modals */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onOpenImport={() => {
+          setIsSettingsOpen(false);
+          setIsImportModalOpen(true);
+        }}
+      />
+
+      <ImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImportComplete={() => {
+          window.location.reload();
+        }}
+      />
+
+      <SkillsModal isOpen={isSkillsModalOpen} onClose={() => setIsSkillsModalOpen(false)} />
+      <SchedulerPanel
+        isOpen={isSchedulerPanelOpen}
+        onClose={() => setIsSchedulerPanelOpen(false)}
+        agentId={selectedAgentId}
+      />
+      <MCPAgentManager
+        isOpen={isMCPManagerOpen}
+        onClose={() => setIsMCPManagerOpen(false)}
+        currentAgentId={selectedAgentId}
+      />
 
       {isHiringOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4">

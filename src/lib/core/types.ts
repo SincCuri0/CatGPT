@@ -1,3 +1,5 @@
+import type { RuntimeHookRegistry } from "@/lib/runtime/hooks/registry";
+
 export interface Message {
     id: string;
     role: "system" | "user" | "assistant" | "tool";
@@ -48,6 +50,10 @@ export interface ToolExecutionContext {
     agentId?: string;
     agentName?: string;
     providerId?: string;
+    agentWorkspaceRoot?: string;
+    agentWorkspaceRootRelative?: string;
+    agentWorkspaceArtifactsDir?: string;
+    agentWorkspaceArtifactsDirRelative?: string;
     squadId?: string;
     squadName?: string;
     runId?: string;
@@ -57,6 +63,8 @@ export interface ToolExecutionContext {
     awaitSubAgentRun?: (runId: string, timeoutMs?: number) => Promise<SubAgentRunState | null>;
     listSubAgentRuns?: () => Promise<SubAgentRunState[]>;
     cancelSubAgentRun?: (runId: string, reason?: string) => Promise<SubAgentRunState | null>;
+    runtimeHookRegistry?: RuntimeHookRegistry;
+    secretValues?: Record<string, string>;
 }
 
 export type ToolArtifactKind = "file" | "shell" | "web" | "other";
@@ -113,7 +121,5 @@ export interface Tool {
     description: string;
     privileged?: boolean;
     inputSchema?: ToolInputSchema;
-    // Backward compatibility for existing tool definitions.
-    parameters?: ToolInputSchema;
     execute: (args: unknown, context?: ToolExecutionContext) => Promise<ToolResult>;
 }

@@ -1,0 +1,158 @@
+[
+    {
+        "title": "Quantum Physics Debate",
+        "create_time": 1709251200,
+        "update_time": 1709254800,
+        "current_node": "msg_003",
+        "conversation_id": "conv_001",
+        "gizmo_id": "g-physics-expert",
+        "mapping": {
+            "msg_001": {
+                "id": "msg_001",
+                "message": {
+                    "id": "msg_001",
+                    "author": {
+                        "role": "system",
+                        "name": null,
+                        "metadata": {}
+                    },
+                    "create_time": 1709251200,
+                    "update_time": null,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            "You are a physics expert."
+                        ]
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": true,
+                    "weight": 1,
+                    "metadata": {}
+                },
+                "parent": null,
+                "children": [
+                    "msg_002"
+                ]
+            },
+            "msg_002": {
+                "id": "msg_002",
+                "message": {
+                    "id": "msg_002",
+                    "author": {
+                        "role": "user",
+                        "name": null,
+                        "metadata": {}
+                    },
+                    "create_time": 1709251210,
+                    "update_time": null,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            "Is Schrödinger's cat alive?"
+                        ]
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": true,
+                    "weight": 1,
+                    "metadata": {}
+                },
+                "parent": "msg_001",
+                "children": [
+                    "msg_003"
+                ]
+            },
+            "msg_003": {
+                "id": "msg_003",
+                "message": {
+                    "id": "msg_003",
+                    "author": {
+                        "role": "assistant",
+                        "name": null,
+                        "metadata": {
+                            "model_slug": "gpt-4"
+                        }
+                    },
+                    "create_time": 1709251220,
+                    "update_time": null,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            "It is both alive and dead until observed."
+                        ]
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": true,
+                    "weight": 1,
+                    "metadata": {}
+                },
+                "parent": "msg_002",
+                "children": []
+            }
+        }
+    },
+    {
+        "title": "Game Dev Ideas",
+        "create_time": 1709300000,
+        "update_time": 1709300100,
+        "current_node": "msg_102",
+        "conversation_id": "conv_002",
+        "gizmo_id": null,
+        "conversation_template_id": "proj_game_design",
+        "mapping": {
+            "msg_101": {
+                "id": "msg_101",
+                "message": {
+                    "id": "msg_101",
+                    "author": {
+                        "role": "user",
+                        "name": null,
+                        "metadata": {}
+                    },
+                    "create_time": 1709300000,
+                    "update_time": null,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            "Any ideas for a cat game?"
+                        ]
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": true,
+                    "weight": 1,
+                    "metadata": {}
+                },
+                "parent": null,
+                "children": [
+                    "msg_102"
+                ]
+            },
+            "msg_102": {
+                "id": "msg_102",
+                "message": {
+                    "id": "msg_102",
+                    "author": {
+                        "role": "assistant",
+                        "name": null,
+                        "metadata": {
+                            "model_slug": "gpt-3.5-turbo"
+                        }
+                    },
+                    "create_time": 1709300010,
+                    "update_time": null,
+                    "content": {
+                        "content_type": "text",
+                        "parts": [
+                            "How about CatGPT? A cat that codes."
+                        ]
+                    },
+                    "status": "finished_successfully",
+                    "end_turn": true,
+                    "weight": 1,
+                    "metadata": {}
+                },
+                "parent": "msg_101",
+                "children": []
+            }
+        }
+    }
+]

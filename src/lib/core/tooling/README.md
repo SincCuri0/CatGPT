@@ -9,7 +9,7 @@ This module standardizes tools for all agents and providers.
 - Safe execution: Tool arguments are validated before tool execution.
 
 ## Modules
-- `normalizeTool.ts`: Normalizes legacy `parameters` into canonical `inputSchema`.
+- `normalizeTool.ts`: Ensures canonical `inputSchema` defaults are present.
 - `providerToolAdapter.ts`: Converts canonical tools into provider tool manifests.
 - `toolValidation.ts`: Performs schema-based argument checks.
 

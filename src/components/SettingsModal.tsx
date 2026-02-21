@@ -2,7 +2,7 @@
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCallback, useEffect, useState } from "react";
-import { X, Key, Save, Cat, ExternalLink, Check, Bug, Server } from "lucide-react";
+import { X, Key, Save, Cat, ExternalLink, Check, Bug, Server, FileJson, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PROVIDERS } from "@/lib/llm/constants";
 
@@ -19,6 +19,7 @@ const API_KEY_PROVIDERS = [
         envVar: "ELEVENLABS_API_KEY",
     },
 ];
+const RUNTIME_TOKEN_STORAGE_KEY = "cat_gpt_runtime_admin_token";
 
 interface McpServiceSummary {
     id: string;
@@ -48,7 +49,7 @@ function getStatusBadge(status: McpServiceSummary["status"]): { label: string; c
     return { label: "Error", className: "bg-[#f7768e]/10 text-[#f7768e] border-[#f7768e]/30" };
 }
 
-export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function SettingsModal({ isOpen, onClose, onOpenImport }: { isOpen: boolean; onClose: () => void; onOpenImport: () => void }) {
     const {
         apiKeys,
         setProviderKey,
@@ -60,6 +61,7 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
     const [mcpServices, setMcpServices] = useState<McpServiceSummary[]>([]);
     const [isLoadingMcpServices, setIsLoadingMcpServices] = useState(false);
     const [mcpServicesError, setMcpServicesError] = useState<string | null>(null);
+    const [runtimeAdminToken, setRuntimeAdminToken] = useState("");
     const effectiveKeys = tempKeys ?? apiKeys;
 
     const loadMcpServices = useCallback(async () => {
@@ -85,6 +87,12 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
     useEffect(() => {
         if (!isOpen) return;
         void loadMcpServices();
+        try {
+            const storedToken = localStorage.getItem(RUNTIME_TOKEN_STORAGE_KEY) || "";
+            setRuntimeAdminToken(storedToken);
+        } catch {
+            setRuntimeAdminToken("");
+        }
     }, [isOpen, loadMcpServices]);
 
     const handleKeyChange = (providerId: string, key: string) => {
@@ -100,6 +108,16 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
     };
 
     const handleSave = () => {
+        try {
+            const trimmedRuntimeToken = runtimeAdminToken.trim();
+            if (trimmedRuntimeToken) {
+                localStorage.setItem(RUNTIME_TOKEN_STORAGE_KEY, trimmedRuntimeToken);
+            } else {
+                localStorage.removeItem(RUNTIME_TOKEN_STORAGE_KEY);
+            }
+        } catch {
+            // Ignore localStorage write failures.
+        }
         // Save all changed keys
         Object.entries(effectiveKeys).forEach(([provider, key]) => {
             setProviderKey(provider, key);
@@ -279,6 +297,42 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                                         ? "Enabled. API routes print debug details to the console."
                                         : "Disabled. API debug logging is muted unless explicitly enabled."}
                                 </p>
+                            </div>
+
+                            {/* Data Management Section */}
+                            <div className="bg-[#24283b] rounded-2xl p-5 border border-[#414868]">
+                                <div className="flex items-center gap-2 mb-2 text-sm font-bold text-[#c0caf5]">
+                                    <FileJson className="w-4 h-4 text-[#7aa2f7]" />
+                                    Data Management
+                                </div>
+                                <p className="text-xs text-[#787c99] leading-relaxed mb-3">
+                                    Manage your local conversation data.
+                                </p>
+                                <button
+                                    onClick={onOpenImport}
+                                    className="w-full flex items-center justify-center gap-2 bg-[#1f2335] hover:bg-[#292e42] border border-[#414868] text-white text-xs font-semibold py-2.5 rounded-xl transition-all"
+                                >
+                                    <Upload className="w-3 h-3" />
+                                    Import from ChatGPT Export
+                                </button>
+                            </div>
+
+                            {/* Runtime Token Section */}
+                            <div className="bg-[#24283b] rounded-2xl p-5 border border-[#414868]">
+                                <div className="flex items-center gap-2 mb-2 text-sm font-bold text-[#c0caf5]">
+                                    <Key className="w-4 h-4 text-[#bb9af7]" />
+                                    Runtime Admin Token
+                                </div>
+                                <p className="text-xs text-[#787c99] leading-relaxed mb-3">
+                                    Optional token sent to runtime ops endpoints (`/api/runtime/*`). Needed in production when `RUNTIME_ADMIN_TOKEN` is configured.
+                                </p>
+                                <input
+                                    type="password"
+                                    value={runtimeAdminToken}
+                                    onChange={(event) => setRuntimeAdminToken(event.target.value)}
+                                    placeholder="Runtime admin token (optional)"
+                                    className="w-full bg-[#16161e] border border-[#414868] rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-[#bb9af7] focus:ring-1 focus:ring-[#bb9af7] transition-all placeholder:text-[#565f89] text-sm"
+                                />
                             </div>
                         </div>
 

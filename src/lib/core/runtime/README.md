@@ -7,11 +7,8 @@ This runtime replaces the previous text-JSON fallback tool path with native tool
 - Native tool loop in `Agent.process` using provider tool call messages + tool result messages.
 - Canonical tool execution metrics (attempted/succeeded/failed/malformed + verified file/shell effects).
 - Provider adapters that preserve assistant tool calls and tool results across turns.
-- Sub-agent runtime primitives:
-  - `sessions_spawn`
-  - `sessions_await`
-  - `sessions_list`
-  - `sessions_cancel`
+- Sub-agent runtime tool:
+  - `subagents` (`action`: `spawn` | `await` | `list` | `cancel`)
 - Queued sub-agent coordinator with bounded concurrency.
 - Durable run store (`data/subagent-runs.json` by default) with restart recovery.
 - Sub-agent runtime wiring in both:

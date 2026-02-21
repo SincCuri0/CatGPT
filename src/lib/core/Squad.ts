@@ -50,8 +50,6 @@ export interface SquadConfig {
     name: string;
     goal?: string;
     context?: string;
-    // Legacy alias retained for backward compatibility with existing local storage.
-    mission?: string;
     members: string[];
     maxIterations?: number;
     accessMode?: AccessPermissionMode;
@@ -148,9 +146,7 @@ function sanitizeMembers(input: unknown): string[] {
 }
 
 export function getSquadGoal(config?: SquadConfig | null): string {
-    const directGoal = sanitizeText(config?.goal);
-    if (directGoal) return directGoal;
-    return sanitizeText(config?.mission);
+    return sanitizeText(config?.goal);
 }
 
 export function getSquadContext(config?: SquadConfig | null): string {
@@ -174,12 +170,7 @@ export function getSquadInteractionConfig(config?: SquadConfig | null): SquadInt
 }
 
 export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
-    const legacyDirectorId = sanitizeText((config as { directorId?: unknown }).directorId);
     const normalizedMembers = sanitizeMembers(config.members);
-    const effectiveMembers = normalizedMembers.length > 0
-        ? normalizedMembers
-        : (legacyDirectorId ? [legacyDirectorId] : []);
-
     const goal = getSquadGoal(config);
     const context = getSquadContext(config);
     const safeMaxIterations = typeof config.maxIterations === "number" && Number.isFinite(config.maxIterations)
@@ -199,9 +190,8 @@ export function normalizeSquadConfig(config: SquadConfig): SquadConfig {
     return {
         ...config,
         goal,
-        mission: goal,
         context,
-        members: effectiveMembers,
+        members: normalizedMembers,
         maxIterations: safeMaxIterations,
         accessMode: config.accessMode === "full_access" ? "full_access" : "ask_always",
         orchestrator: {

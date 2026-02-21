@@ -25,6 +25,9 @@ const NON_CHAT_MODEL_HINT_TOKENS = [
     "tts",
     "speech",
 ];
+const GROQ_TOOL_NAME_SANITIZE_REGEX = /[^a-zA-Z0-9_]/g;
+const GROQ_TOOL_NAME_MAX_LENGTH = 64;
+const GROQ_VALID_TOOL_NAME_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
 
 interface GroqErrorEnvelope {
     code?: unknown;
@@ -56,6 +59,22 @@ function safeParseToolArgs(raw: string): Record<string, unknown> {
         return parsed as Record<string, unknown>;
     }
     return {};
+}
+
+function normalizeGroqToolName(raw: unknown): string {
+    if (typeof raw !== "string") return "";
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    const sanitizedBase = trimmed
+        .replace(GROQ_TOOL_NAME_SANITIZE_REGEX, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    const withFallback = sanitizedBase || "tool";
+    const withValidPrefix = /^[a-zA-Z_]/.test(withFallback)
+        ? withFallback
+        : `tool_${withFallback}`;
+    const normalized = withValidPrefix.slice(0, GROQ_TOOL_NAME_MAX_LENGTH);
+    return GROQ_VALID_TOOL_NAME_REGEX.test(normalized) ? normalized : "";
 }
 
 function escapeControlCharsInsideStrings(raw: string): string {
@@ -205,25 +224,52 @@ function normalizeArgumentsText(rawArguments: unknown): string {
 function toGroqMessages(messages: LLMMessage[]): ChatCompletionCreateParamsNonStreaming["messages"] {
     return messages.map((message) => {
         if (message.role === "tool") {
+            const normalizedName = normalizeGroqToolName(message.name || "tool") || "tool";
             return {
                 role: "tool",
                 content: message.content,
                 tool_call_id: message.toolCallId || "unknown_tool_call",
+                name: normalizedName,
             };
         }
 
         if (message.role === "assistant" && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+            const normalizedToolCalls = message.toolCalls
+                .map((toolCall, index) => {
+                    const name = normalizeGroqToolName(toolCall?.name);
+                    if (!name) return null;
+                    const id = typeof toolCall.id === "string" && toolCall.id.trim().length > 0
+                        ? toolCall.id.trim()
+                        : `tool_call_${index + 1}`;
+                    const argumentsText = typeof toolCall.argumentsText === "string"
+                        ? toolCall.argumentsText
+                        : "{}";
+                    return {
+                        id,
+                        type: "function" as const,
+                        function: {
+                            name,
+                            arguments: argumentsText,
+                        },
+                    };
+                })
+                .filter((toolCall): toolCall is {
+                    id: string;
+                    type: "function";
+                    function: { name: string; arguments: string };
+                } => Boolean(toolCall));
+
+            if (normalizedToolCalls.length === 0) {
+                return {
+                    role: "assistant",
+                    content: message.content || "",
+                };
+            }
+
             return {
                 role: "assistant",
                 content: message.content || null,
-                tool_calls: message.toolCalls.map((toolCall) => ({
-                    id: toolCall.id,
-                    type: "function" as const,
-                    function: {
-                        name: toolCall.name,
-                        arguments: toolCall.argumentsText,
-                    },
-                })),
+                tool_calls: normalizedToolCalls,
             };
         }
 
@@ -232,6 +278,122 @@ function toGroqMessages(messages: LLMMessage[]): ChatCompletionCreateParamsNonSt
             content: message.content,
         };
     }) as ChatCompletionCreateParamsNonStreaming["messages"];
+}
+
+function summarizeToolNameDiagnostics(payload: ChatCompletionCreateParamsNonStreaming): {
+    declaredToolCount: number;
+    declaredToolNames: string[];
+    declaredToolsMissingName: number;
+    assistantToolCallCount: number;
+    assistantToolCallNames: string[];
+    assistantToolCallsMissingName: number;
+    toolMessageCount: number;
+    toolMessageNames: string[];
+    toolMessagesMissingName: number;
+} {
+    const declaredToolNames: string[] = [];
+    let declaredToolsMissingName = 0;
+    const rawTools = (payload as unknown as { tools?: unknown }).tools;
+    if (Array.isArray(rawTools)) {
+        for (const rawTool of rawTools) {
+            if (!isRecord(rawTool)) continue;
+            const fn = isRecord(rawTool.function) ? rawTool.function : null;
+            const name = typeof fn?.name === "string" ? fn.name : "";
+            declaredToolNames.push(name);
+            if (!name.trim()) {
+                declaredToolsMissingName += 1;
+            }
+        }
+    }
+
+    const assistantToolCallNames: string[] = [];
+    let assistantToolCallsMissingName = 0;
+    const toolMessageNames: string[] = [];
+    let toolMessagesMissingName = 0;
+    const rawMessages = (payload as unknown as { messages?: unknown }).messages;
+    if (Array.isArray(rawMessages)) {
+        for (const rawMessage of rawMessages) {
+            if (!isRecord(rawMessage)) continue;
+            if (rawMessage.role === "assistant" && Array.isArray(rawMessage.tool_calls)) {
+                for (const rawCall of rawMessage.tool_calls) {
+                    if (!isRecord(rawCall)) continue;
+                    const fn = isRecord(rawCall.function) ? rawCall.function : null;
+                    const name = typeof fn?.name === "string" ? fn.name : "";
+                    assistantToolCallNames.push(name);
+                    if (!name.trim()) {
+                        assistantToolCallsMissingName += 1;
+                    }
+                }
+            }
+
+            if (rawMessage.role === "tool") {
+                const name = typeof rawMessage.name === "string" ? rawMessage.name : "";
+                toolMessageNames.push(name);
+                if (!name.trim()) {
+                    toolMessagesMissingName += 1;
+                }
+            }
+        }
+    }
+
+    return {
+        declaredToolCount: declaredToolNames.length,
+        declaredToolNames: declaredToolNames.slice(0, 40),
+        declaredToolsMissingName,
+        assistantToolCallCount: assistantToolCallNames.length,
+        assistantToolCallNames: assistantToolCallNames.slice(0, 80),
+        assistantToolCallsMissingName,
+        toolMessageCount: toolMessageNames.length,
+        toolMessageNames: toolMessageNames.slice(0, 80),
+        toolMessagesMissingName,
+    };
+}
+
+function ensureGroqToolMessageNames(
+    messages: ChatCompletionCreateParamsNonStreaming["messages"],
+): number {
+    const rawMessages = Array.isArray(messages)
+        ? (messages as unknown as Array<Record<string, unknown>>)
+        : [];
+    if (rawMessages.length === 0) return 0;
+
+    const toolNameByCallId = new Map<string, string>();
+    for (const rawMessage of rawMessages) {
+        if (!isRecord(rawMessage)) continue;
+        if (rawMessage.role !== "assistant") continue;
+        if (!Array.isArray(rawMessage.tool_calls)) continue;
+
+        for (const rawCall of rawMessage.tool_calls) {
+            if (!isRecord(rawCall)) continue;
+            const id = typeof rawCall.id === "string" ? rawCall.id.trim() : "";
+            const fn = isRecord(rawCall.function) ? rawCall.function : null;
+            const name = normalizeGroqToolName(fn?.name);
+            if (id && name) {
+                toolNameByCallId.set(id, name);
+            }
+        }
+    }
+
+    let repairedCount = 0;
+    for (const rawMessage of rawMessages) {
+        if (!isRecord(rawMessage)) continue;
+        if (rawMessage.role !== "tool") continue;
+
+        const existingName = normalizeGroqToolName(rawMessage.name);
+        if (existingName) {
+            rawMessage.name = existingName;
+            continue;
+        }
+
+        const toolCallId = typeof rawMessage.tool_call_id === "string" ? rawMessage.tool_call_id.trim() : "";
+        const repairedName = (toolCallId && toolNameByCallId.get(toolCallId))
+            ? toolNameByCallId.get(toolCallId)!
+            : "tool";
+        rawMessage.name = repairedName;
+        repairedCount += 1;
+    }
+
+    return repairedCount;
 }
 
 function parseToolCallObject(raw: unknown): { id: string; name: string; argumentsText: string } | null {
@@ -446,21 +608,59 @@ export class GroqClient implements LLMClient {
     }
 
     private buildRequestPayload(messages: LLMMessage[], options?: LLMChatOptions): ChatCompletionCreateParamsNonStreaming {
+        const renamedToolNames: Array<{ from: string; to: string }> = [];
+        const normalizedTools = Array.isArray(options?.tools)
+            ? options.tools
+                .map((tool) => {
+                    const normalizedName = normalizeGroqToolName(tool?.name);
+                    if (!normalizedName) return null;
+                    if (typeof tool?.name === "string" && tool.name !== normalizedName) {
+                        renamedToolNames.push({ from: tool.name, to: normalizedName });
+                    }
+                    return {
+                        ...tool,
+                        name: normalizedName,
+                    };
+                })
+                .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool))
+            : [];
+        if (renamedToolNames.length > 0) {
+            console.warn("GroqClient normalized tool names before request dispatch.", {
+                renamed: renamedToolNames.slice(0, 40),
+                totalRenamed: renamedToolNames.length,
+            });
+        }
+        if (Array.isArray(options?.tools) && normalizedTools.length !== options.tools.length) {
+            console.warn("GroqClient dropped tool definitions without valid names before request dispatch.", {
+                provided: options.tools.length,
+                kept: normalizedTools.length,
+            });
+        }
+
         const requestPayload: ChatCompletionCreateParamsNonStreaming = {
             messages: toGroqMessages(messages),
             model: this.model,
             temperature: options?.temperature ?? 0.7,
             max_tokens: options?.max_tokens ?? 4096,
-            tools: options?.tools?.map((tool) => ({
+        };
+        const repairedToolMessageNames = ensureGroqToolMessageNames(requestPayload.messages);
+        if (repairedToolMessageNames > 0) {
+            console.warn("GroqClient repaired missing tool message names before request dispatch.", {
+                repairedCount: repairedToolMessageNames,
+            });
+        }
+
+        if (normalizedTools.length > 0) {
+            requestPayload.tools = normalizedTools.map((tool) => ({
                 type: "function",
                 function: {
                     name: tool.name,
                     description: tool.description,
                     parameters: tool.inputSchema,
                 },
-            })),
-            tool_choice: options?.toolChoice === "none" ? "none" : "auto",
-        };
+            }));
+            requestPayload.tool_choice = options?.toolChoice === "none" ? "none" : "auto";
+        }
 
         if (options?.reasoningEffort && options.reasoningEffort !== "none" && supportsGroqReasoningEffort(this.model)) {
             requestPayload.reasoning_effort = mapGroqReasoningEffort(this.model, options.reasoningEffort);
@@ -542,8 +742,9 @@ export class GroqClient implements LLMClient {
     }
 
     private async chatInternal(messages: LLMMessage[], options?: LLMChatOptions, allowModelRecovery: boolean = true): Promise<LLMResponse> {
+        let requestPayload: ChatCompletionCreateParamsNonStreaming | null = null;
         try {
-            const requestPayload = this.buildRequestPayload(messages, options);
+            requestPayload = this.buildRequestPayload(messages, options);
             const completion = await this.client.chat.completions.create(requestPayload);
 
             const message = completion.choices[0]?.message;
@@ -565,6 +766,13 @@ export class GroqClient implements LLMClient {
         } catch (error: unknown) {
             const { code, failedGeneration } = extractGroqErrorDetails(error);
             const isModelUnavailable = isModelUnavailableCode(code) || hasUnavailableModelMessage(error);
+            const errorMessage = typeof (error as { message?: unknown })?.message === "string"
+                ? ((error as { message?: string }).message || "").toLowerCase()
+                : "";
+
+            if (requestPayload && errorMessage.includes("tools should have a name")) {
+                console.warn("Groq request rejected due to invalid/missing tool names. Diagnostic summary:", summarizeToolNameDiagnostics(requestPayload));
+            }
 
             if (allowModelRecovery && isModelUnavailable) {
                 const recovered = await this.retryWithFallbackModel(messages, options);

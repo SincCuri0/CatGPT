@@ -4,11 +4,6 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { DEBUG_LOGS_STORAGE_KEY } from "@/lib/debug/constants";
 
 interface SettingsContextType {
-    // Legacy support
-    apiKey: string | null;
-    setApiKey: (key: string) => void;
-
-    // New multi-provider support
     apiKeys: Record<string, string>;
     setProviderKey: (providerId: string, key: string) => void;
     serverConfiguredKeys: Record<string, boolean>;
@@ -39,17 +34,7 @@ function getInitialApiKeys(): Record<string, string> {
         }
     }
 
-    const oldGroqKey = localStorage.getItem("groq_api_key");
-    if (oldGroqKey && !localKeys.groq) {
-        localKeys.groq = oldGroqKey;
-    }
-
     return localKeys;
-}
-
-function getInitialDebugLogsEnabled(): boolean {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem(DEBUG_LOGS_STORAGE_KEY) === "true";
 }
 
 function getInitialTheme(): ThemeMetadata {
@@ -66,58 +51,48 @@ function getInitialTheme(): ThemeMetadata {
 }
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-    // apiKeys: contains local keys (users enter these)
     const [apiKeys, setApiKeysState] = useState<Record<string, string>>(() => getInitialApiKeys());
-    // serverConfiguredKeys: which keys are set on server (.env)
     const [serverConfiguredKeys, setServerConfiguredKeys] = useState<Record<string, boolean>>({});
-    const [debugLogsEnabled, setDebugLogsEnabledState] = useState<boolean>(() => getInitialDebugLogsEnabled());
+    const [debugLogsEnabled, setDebugLogsEnabledState] = useState<boolean>(false);
     const [themeMetadata, setThemeMetadataState] = useState<ThemeMetadata>(() => getInitialTheme());
 
     useEffect(() => {
-        // Fetch server config status
-        fetch('/api/settings', {
+        setDebugLogsEnabledState(localStorage.getItem(DEBUG_LOGS_STORAGE_KEY) === "true");
+    }, []);
+
+    useEffect(() => {
+        fetch("/api/settings", {
             headers: debugLogsEnabled ? { "x-debug-logs": "1" } : undefined,
         })
-            .then(res => res.json())
+            .then((res) => res.json())
             .then(data => {
                 if (data.keysConfigured) {
                     setServerConfiguredKeys(data.keysConfigured);
                 }
-                // Optional: Sync legacy logic if needed, but 'keysConfigured' is enough for UI
             })
-            .catch(e => console.error("Settings sync failed", e));
+            .catch((error) => console.error("Settings sync failed", error));
     }, [debugLogsEnabled]);
 
     const setProviderKey = async (providerId: string, key: string) => {
         const newKeys = { ...apiKeys, [providerId]: key };
-        if (!key) delete newKeys[providerId]; // Remove if empty
+        if (!key) delete newKeys[providerId];
 
         setApiKeysState(newKeys);
         localStorage.setItem("cat_gpt_api_keys", JSON.stringify(newKeys));
 
-        // Sync legacy key if Groq
-        if (providerId === "groq") {
-            if (key) localStorage.setItem("groq_api_key", key);
-            else localStorage.removeItem("groq_api_key");
-        }
-
-        // Persist to server (optional, for dev mode)
         try {
-            await fetch('/api/settings', {
-                method: 'POST',
+            await fetch("/api/settings", {
+                method: "POST",
                 headers: {
-                    'Content-Type': 'application/json',
+                    "Content-Type": "application/json",
                     ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
                 },
-                body: JSON.stringify({ apiKeys: { [providerId]: key } })
+                body: JSON.stringify({ apiKeys: { [providerId]: key } }),
             });
-        } catch (e) {
-            console.error("Failed to persist API Key to server", e);
+        } catch (error) {
+            console.error("Failed to persist API key to server", error);
         }
     };
-
-    // Legacy setter
-    const setApiKey = (key: string) => setProviderKey("groq", key);
 
     const setDebugLogsEnabled = (enabled: boolean) => {
         setDebugLogsEnabledState(enabled);
@@ -131,8 +106,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
     return (
         <SettingsContext.Provider value={{
-            apiKey: apiKeys.groq || null,
-            setApiKey,
             apiKeys,
             setProviderKey,
             serverConfiguredKeys,

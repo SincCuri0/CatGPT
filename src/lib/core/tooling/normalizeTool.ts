@@ -8,17 +8,11 @@ const DEFAULT_SCHEMA: ToolInputSchema = {
 };
 
 export function normalizeToolDefinition(tool: Tool): Tool {
-    const schema = tool.inputSchema ?? tool.parameters ?? DEFAULT_SCHEMA;
+    const schema = tool.inputSchema ?? DEFAULT_SCHEMA;
 
     return {
         ...tool,
         inputSchema: {
-            type: "object",
-            properties: schema.properties ?? {},
-            required: schema.required ?? [],
-            additionalProperties: schema.additionalProperties ?? true,
-        },
-        parameters: {
             type: "object",
             properties: schema.properties ?? {},
             required: schema.required ?? [],

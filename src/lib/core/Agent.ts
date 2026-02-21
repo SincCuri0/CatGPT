@@ -7,6 +7,18 @@ import { Message, Tool, ToolExecutionContext, ToolResult } from "./types";
 import { buildProviderToolManifest } from "./tooling/providerToolAdapter";
 import { createToolCallSignature, parseToolArguments } from "./tooling/toolArgParsing";
 import { validateToolArgs } from "./tooling/toolValidation";
+import { normalizeToolIds } from "./tooling/toolIds";
+import type { AgentEvolutionConfig } from "@/lib/evolution/types";
+import { replaceSecretPlaceholdersInArgs } from "@/lib/runtime/services/secretsService";
+import {
+    buildManagedHistory,
+    estimateTokenCount,
+    inferContextWindowTokens,
+    injectOrphanToolResultErrors,
+    pruneExpiredToolResults,
+} from "./contextManagement";
+import { resolveContextWindowTokensFromCatalog } from "@/lib/llm/runtimeModelMetadata";
+import type { RuntimePromptBeforeEvent } from "@/lib/runtime/hooks/types";
 
 export type AgentStyle = "assistant" | "character" | "expert" | "custom";
 export type AccessPermissionMode = "ask_always" | "full_access";
@@ -14,8 +26,16 @@ export type AgentApiKeys = string | Record<string, string | null | undefined> | 
 
 const MAX_TOOL_TURNS = 24;
 const MAX_IDENTICAL_TOOL_CALLS = 2;
-const PRIVILEGED_TOOL_IDS = new Set(["fs_write", "shell_execute", "write_file", "execute_command"]);
+const PRIVILEGED_TOOL_IDS = new Set(["shell_execute", "execute_command"]);
 const MCP_ALL_TOOL_ID = "mcp_all";
+const MIN_CONTEXT_WINDOW_TOKENS = 16_000;
+const WARN_CONTEXT_WINDOW_TOKENS = 32_000;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 65_536;
+const RESERVED_RESPONSE_TOKENS = 5_120;
+const RESERVED_TOOLING_TOKENS = 1_200;
+const TOOL_MODE_PROMPT_TOKEN_CAP = 5_000;
+const TOOL_MODE_MAX_RESPONSE_TOKENS = 1_536;
+const SUBAGENTS_TOOL_ID = "subagents";
 
 function isToolResultError(result: ToolResult): boolean {
     return !result.ok;
@@ -147,6 +167,12 @@ function isRenderableHistoryRole(role: Message["role"]): role is "user" | "assis
     return role === "user" || role === "assistant";
 }
 
+function isSubAgentsTool(tool: Tool): boolean {
+    const normalizedId = (tool.id || "").trim().toLowerCase();
+    const normalizedName = (tool.name || "").trim().toLowerCase();
+    return normalizedId === SUBAGENTS_TOOL_ID || normalizedName === SUBAGENTS_TOOL_ID;
+}
+
 interface ToolExecutionSummary {
     attempted: number;
     succeeded: number;
@@ -200,6 +226,7 @@ export interface AgentConfig {
     reasoningEffort?: ReasoningEffort;
     tools?: string[];
     accessMode?: AccessPermissionMode;
+    evolution?: AgentEvolutionConfig;
 }
 
 export class Agent {
@@ -221,7 +248,7 @@ export class Agent {
         this.systemPrompt = config.systemPrompt;
         this.voiceId = config.voiceId || "en-US-ChristopherNeural";
         this.provider = (config.provider || "groq").trim().toLowerCase();
-        this.tools = config.tools || [];
+        this.tools = normalizeToolIds(config.tools);
 
         const requiresToolUse = this.tools.length > 0;
         const preferredModel = (config.model || "").trim();
@@ -270,9 +297,15 @@ Start your response directly. Do not prefix with "System:" or "Agent:".`;
         }
 
         const toolDescriptions = enabledTools
-            .map((tool) => (
-                `- ${tool.name} (ID: ${tool.id})\n  Description: ${tool.description}\n  InputSchema: ${JSON.stringify(tool.inputSchema)}`
-            ))
+            .map((tool) => {
+                const argKeys = tool.inputSchema?.properties
+                    ? Object.keys(tool.inputSchema.properties)
+                    : [];
+                const argHint = argKeys.length > 0
+                    ? `\n  Args: ${argKeys.join(", ")}`
+                    : "";
+                return `- ${tool.name} (ID: ${tool.id})\n  Description: ${tool.description}${argHint}`;
+            })
             .join("\n\n");
 
         const sensitiveToolsEnabled = enabledTools.some((tool) => this.isPrivilegedTool(tool));
@@ -280,6 +313,18 @@ Start your response directly. Do not prefix with "System:" or "Agent:".`;
         const turnAccessGranted = context?.toolAccessGranted === true;
         const accessGuidance = sensitiveToolsEnabled && effectiveAccessMode === "ask_always" && !turnAccessGranted
             ? "\n\nSensitive tool access is not approved for this turn. Do not call filesystem write or shell execution tools unless the user grants approval."
+            : "";
+        const workspaceRoot = (context?.agentWorkspaceRootRelative || "").trim();
+        const workspaceArtifactsDir = (context?.agentWorkspaceArtifactsDirRelative || "").trim();
+        const workspaceGuidance = workspaceRoot
+            ? `\n\nWorkspace policy: Your writable root is "${workspaceRoot}". Keep filesystem and shell operations inside this root.`
+                + (workspaceArtifactsDir
+                    ? ` Prefer placing generated artifacts under "${workspaceArtifactsDir}".`
+                    : "")
+                + " Bootstrap each task by checking existing files in this workspace before creating new ones."
+            : "";
+        const delegationGuidance = enabledTools.some((tool) => isSubAgentsTool(tool))
+            ? "\n\nDelegation policy: For multi-step or tool-heavy work, spawn focused sub-agents via `subagents`. Pass only task-relevant facts, not the full chat transcript."
             : "";
 
         return `${basePrompt}
@@ -290,7 +335,7 @@ Call at most one tool at a time unless your provider supports batched tool calls
 If the latest tool result fully satisfies the request, stop calling tools and answer the user.
 
 Tools:
-${toolDescriptions}${accessGuidance}`;
+${toolDescriptions}${accessGuidance}${workspaceGuidance}${delegationGuidance}`;
     }
 
     private isPrivilegedTool(tool: Tool): boolean {
@@ -387,42 +432,178 @@ ${toolDescriptions}${accessGuidance}`;
                 || this.tools.includes(tool.name)
                 || (hasMcpAllAccess && tool.id.startsWith("mcp:")),
         );
+        const runId = executionContext?.runId || uuidv4();
+        const runStartedAt = Date.now();
+        const runtimeHookRegistry = executionContext?.runtimeHookRegistry;
+        const toolSummary = createEmptyToolExecutionSummary();
+
+        const finalizeResponse = async (message: Message): Promise<Message> => {
+            if (runtimeHookRegistry) {
+                await runtimeHookRegistry.emit("response_stream", {
+                    runId,
+                    agentId: this.id,
+                    timestamp: Date.now(),
+                    chunk: message.content || "",
+                    chunkIndex: 0,
+                    metadata: { synthetic: true },
+                });
+                await runtimeHookRegistry.emit("run_end", {
+                    runId,
+                    agentId: this.id,
+                    timestamp: Date.now(),
+                    status: "completed",
+                    durationMs: Math.max(0, Date.now() - runStartedAt),
+                    output: message.content,
+                });
+            }
+            return message;
+        };
 
         const canUseNativeToolCalling = llm.supportsNativeToolCalling === true;
         if (enabledTools.length > 0 && !canUseNativeToolCalling) {
-            return this.toAssistantMessage(
+            return finalizeResponse(this.toAssistantMessage(
                 `Provider '${this.provider}' does not support native tool calling for this runtime.`,
                 createEmptyToolExecutionSummary(),
-            );
+            ));
         }
         if (enabledTools.length > 0 && !supportsToolUse(this.provider, this.model)) {
-            return this.toAssistantMessage(
+            return finalizeResponse(this.toAssistantMessage(
                 `Model '${this.model}' does not support native tool calling.`,
                 createEmptyToolExecutionSummary(),
-            );
+            ));
         }
 
-        const runId = executionContext?.runId || uuidv4();
-        const toolSummary = createEmptyToolExecutionSummary();
         const repeatedCallCountBySignature = new Map<string, number>();
         let lastSuccessfulToolResult: string | null = null;
 
         const { providerTools, resolveToolId } = buildProviderToolManifest(enabledTools);
+        const catalogContextWindow = await resolveContextWindowTokensFromCatalog(this.provider, this.model);
+        const inferredContextWindow = inferContextWindowTokens(this.model);
+        const resolvedContextWindow = catalogContextWindow || inferredContextWindow;
+        if (typeof resolvedContextWindow === "number" && resolvedContextWindow < MIN_CONTEXT_WINDOW_TOKENS) {
+            return finalizeResponse(this.toAssistantMessage(
+                `Model '${this.model}' appears to have a context window of ${resolvedContextWindow} tokens. This runtime blocks runs below ${MIN_CONTEXT_WINDOW_TOKENS} tokens to avoid context loss.`,
+                enabledTools.length > 0 ? toolSummary : null,
+            ));
+        }
 
-        const currentHistory: LLMMessage[] = [
-            { role: "system", content: this.getSystemMessage(enabledTools, executionContext) },
-            ...history
-                .filter((message) => isRenderableHistoryRole(message.role))
-                .map((message) => ({
-                    role: message.role,
-                    content: message.content,
-                })),
+        const contextWarnings: string[] = [];
+        if (typeof resolvedContextWindow === "number" && resolvedContextWindow < WARN_CONTEXT_WINDOW_TOKENS) {
+            contextWarnings.push(
+                `This model appears to have a constrained context window (${resolvedContextWindow} tokens). Be concise and avoid unnecessary repetition.`,
+            );
+        }
+        if (!catalogContextWindow && inferredContextWindow) {
+            contextWarnings.push("Context window estimated from model id because catalog metadata was unavailable.");
+        }
+
+        const toolModeEnabled = enabledTools.length > 0;
+        const effectiveContextWindow = resolvedContextWindow || DEFAULT_CONTEXT_WINDOW_TOKENS;
+        const maxPromptTokensFromModel = Math.max(2_048, effectiveContextWindow - RESERVED_RESPONSE_TOKENS);
+        const maxPromptTokens = toolModeEnabled
+            ? Math.min(maxPromptTokensFromModel, TOOL_MODE_PROMPT_TOKEN_CAP)
+            : maxPromptTokensFromModel;
+        const maxResponseTokens = toolModeEnabled ? TOOL_MODE_MAX_RESPONSE_TOKENS : 4096;
+        if (toolModeEnabled && maxPromptTokens < maxPromptTokensFromModel) {
+            contextWarnings.push(
+                `Tool-call context narrowing is active: prompt budget capped to ~${maxPromptTokens} tokens to keep delegation/tool runs stable in long chats.`,
+            );
+        }
+        const baseSystemMessage = this.getSystemMessage(enabledTools, executionContext);
+        const renderableHistory: LLMMessage[] = history
+            .filter((message) => isRenderableHistoryRole(message.role))
+            .map((message) => ({
+                role: message.role,
+                content: message.content,
+            }));
+        const systemTokenCost = estimateTokenCount(baseSystemMessage) + RESERVED_TOOLING_TOKENS;
+        const historyTokenBudget = Math.max(512, maxPromptTokens - systemTokenCost);
+        const managedHistory = buildManagedHistory(renderableHistory, historyTokenBudget);
+        if (managedHistory.trimmedMessageCount > 0) {
+            contextWarnings.push(`Long message guard trimmed ${managedHistory.trimmedMessageCount} oversized message(s) using head/tail preservation.`);
+        }
+        if (managedHistory.droppedTurnCount > 0) {
+            contextWarnings.push(`Turn-boundary compaction dropped ${managedHistory.droppedTurnCount} older turn(s) and injected a staged summary.`);
+        }
+
+        let effectiveBaseSystemMessage = baseSystemMessage;
+        if (runtimeHookRegistry) {
+            const latestUserPrompt = [...history]
+                .slice()
+                .reverse()
+                .find((message) => message.role === "user")?.content || "";
+            const contextMessages: RuntimePromptBeforeEvent["contextMessages"] = managedHistory.messages.map((message) => ({
+                role: message.role === "system" || message.role === "user" || message.role === "assistant" || message.role === "tool"
+                    ? message.role
+                    : "assistant",
+                content: message.content,
+            }));
+            const promptBeforeEvent: RuntimePromptBeforeEvent = {
+                runId,
+                agentId: this.id,
+                timestamp: Date.now(),
+                systemPrompt: baseSystemMessage,
+                userPrompt: latestUserPrompt,
+                contextMessages,
+                systemPromptAppendices: [],
+            };
+            await runtimeHookRegistry.emit("prompt_before", promptBeforeEvent);
+            const appendices = Array.isArray(promptBeforeEvent.systemPromptAppendices)
+                ? promptBeforeEvent.systemPromptAppendices.filter((entry) => typeof entry === "string" && entry.trim().length > 0)
+                : [];
+            effectiveBaseSystemMessage = appendices.length > 0
+                ? `${promptBeforeEvent.systemPrompt}\n\n${appendices.join("\n\n")}`
+                : promptBeforeEvent.systemPrompt;
+        }
+
+        let systemMessage = contextWarnings.length > 0
+            ? `${effectiveBaseSystemMessage}\n\n## CONTEXT MANAGEMENT\n${contextWarnings.map((line) => `- ${line}`).join("\n")}`
+            : effectiveBaseSystemMessage;
+
+        if (runtimeHookRegistry) {
+            const promptAfterEvent = {
+                runId,
+                agentId: this.id,
+                timestamp: Date.now(),
+                prompt: systemMessage,
+            };
+            await runtimeHookRegistry.emit("prompt_after", promptAfterEvent);
+            systemMessage = promptAfterEvent.prompt;
+        }
+
+        let currentHistory: LLMMessage[] = [
+            { role: "system", content: systemMessage },
+            ...managedHistory.messages,
         ];
+        const toolResultInsertedAtByCallId = new Map<string, number>();
+        let prunedToolResultCount = 0;
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
+            if (toolModeEnabled && currentHistory.length > 1) {
+                const compacted = buildManagedHistory(currentHistory.slice(1), historyTokenBudget);
+                currentHistory = [{ ...currentHistory[0] }, ...compacted.messages];
+            }
+
+            const repaired = injectOrphanToolResultErrors(currentHistory);
+            if (repaired.injectedCount > 0) {
+                currentHistory = repaired.messages;
+                toolSummary.failed += repaired.injectedCount;
+            }
+
+            const pruned = pruneExpiredToolResults(currentHistory, {
+                providerId: this.provider,
+                now: Date.now(),
+                maxPromptTokens,
+                toolResultInsertedAtByCallId,
+            });
+            if (pruned.prunedCount > 0) {
+                prunedToolResultCount += pruned.prunedCount;
+                currentHistory = pruned.messages;
+            }
+
             const response = await llm.chat(currentHistory, {
                 temperature: enabledTools.length > 0 ? 0.2 : 0.7,
-                max_tokens: 4096,
+                max_tokens: maxResponseTokens,
                 reasoningEffort: this.reasoningEffort,
                 tools: enabledTools.length > 0 ? providerTools : undefined,
                 toolChoice: enabledTools.length > 0 ? "auto" : undefined,
@@ -430,10 +611,10 @@ ${toolDescriptions}${accessGuidance}`;
 
             const providerToolCalls = normalizeProviderToolCalls(response.toolCalls, turn);
             if (providerToolCalls.length === 0) {
-                return this.toAssistantMessage(
+                return finalizeResponse(this.toAssistantMessage(
                     response.content || "",
                     enabledTools.length > 0 ? toolSummary : null,
-                );
+                ));
             }
 
             currentHistory.push({
@@ -471,7 +652,11 @@ ${toolDescriptions}${accessGuidance}`;
                     continue;
                 }
 
-                const validation = validateToolArgs(tool.inputSchema!, parsedArgsResult.args);
+                const argsWithSecrets = replaceSecretPlaceholdersInArgs(
+                    parsedArgsResult.args,
+                    executionContext?.secretValues,
+                );
+                const validation = validateToolArgs(tool.inputSchema!, argsWithSecrets);
                 if (!validation.ok) {
                     toolSummary.malformed += 1;
                     toolSummary.failed += 1;
@@ -484,7 +669,7 @@ ${toolDescriptions}${accessGuidance}`;
                     continue;
                 }
 
-                const normalizedArgs = validation.normalizedArgs ?? parsedArgsResult.args;
+                const normalizedArgs = validation.normalizedArgs ?? argsWithSecrets;
                 const signature = createToolCallSignature(tool.id, normalizedArgs);
                 const repeatedCount = (repeatedCallCountBySignature.get(signature) ?? 0) + 1;
                 repeatedCallCountBySignature.set(signature, repeatedCount);
@@ -500,6 +685,17 @@ ${toolDescriptions}${accessGuidance}`;
                     continue;
                 }
 
+                if (runtimeHookRegistry) {
+                    await runtimeHookRegistry.emit("tool_before", {
+                        runId,
+                        agentId: this.id,
+                        timestamp: Date.now(),
+                        toolId: tool.id,
+                        toolName: tool.name,
+                        args: normalizedArgs,
+                    });
+                }
+                const toolStartedAt = Date.now();
                 const result = await this.executeTool(tool, normalizedArgs, {
                     ...executionContext,
                     runId,
@@ -507,6 +703,18 @@ ${toolDescriptions}${accessGuidance}`;
                     agentName: this.name,
                     providerId: this.provider,
                 });
+                if (runtimeHookRegistry) {
+                    await runtimeHookRegistry.emit("tool_after", {
+                        runId,
+                        agentId: this.id,
+                        timestamp: Date.now(),
+                        toolId: tool.id,
+                        toolName: tool.name,
+                        args: normalizedArgs,
+                        result,
+                        durationMs: Math.max(0, Date.now() - toolStartedAt),
+                    });
+                }
 
                 toolSummary.attempted += 1;
                 const serializedResult = formatToolResultForPrompt(result);
@@ -527,16 +735,66 @@ ${toolDescriptions}${accessGuidance}`;
                     toolCallId: providerToolCall.id,
                     content: serializedResult,
                 });
+                if (providerToolCall.id.trim().length > 0) {
+                    toolResultInsertedAtByCallId.set(providerToolCall.id.trim(), Date.now());
+                }
             }
         }
 
-        const exhaustedMessage = lastSuccessfulToolResult
-            ? `Tool-call loop limit reached before final narration. Last successful tool result:\n${lastSuccessfulToolResult}`
-            : "Tool-call loop limit reached before producing a final answer.";
+        try {
+            const recoveryInstruction = lastSuccessfulToolResult
+                ? [
+                    "Tool-call budget is exhausted.",
+                    "Do not call any tools.",
+                    "Provide the final user-facing answer now using the conversation and latest tool results.",
+                    "If relevant, incorporate this latest successful tool result:",
+                    lastSuccessfulToolResult,
+                ].join("\n\n")
+                : [
+                    "Tool-call budget is exhausted.",
+                    "Do not call any tools.",
+                    "Provide the best possible final user-facing answer from available context.",
+                ].join("\n\n");
 
-        return this.toAssistantMessage(
-            exhaustedMessage,
+            const recoveryResponse = await llm.chat(
+                [
+                    ...currentHistory,
+                    {
+                        role: "user",
+                        content: recoveryInstruction,
+                    },
+                ],
+                {
+                    temperature: 0.2,
+                    max_tokens: maxResponseTokens,
+                    reasoningEffort: this.reasoningEffort,
+                },
+            );
+
+            const recoveryText = (recoveryResponse.content || "").trim();
+            if (recoveryText.length > 0) {
+                return finalizeResponse(this.toAssistantMessage(
+                    recoveryText,
+                    enabledTools.length > 0 ? toolSummary : null,
+                ));
+            }
+        } catch {
+            // Ignore recovery errors and return a safe fallback below.
+        }
+
+        const latestResult = lastSuccessfulToolResult
+            ? lastSuccessfulToolResult.slice(0, 6000)
+            : "";
+        const fallbackMessage = latestResult
+            ? `I hit a tool-call limit before finishing, but here is the latest successful result:\n\n${latestResult}`
+            : "I hit a tool-call limit before finishing the response. Please retry and I will continue.";
+        const withPruneNote = prunedToolResultCount > 0
+            ? `${fallbackMessage}\n\n[Some older tool results were pruned after provider cache expiry.]`
+            : fallbackMessage;
+
+        return finalizeResponse(this.toAssistantMessage(
+            withPruneNote,
             enabledTools.length > 0 ? toolSummary : null,
-        );
+        ));
     }
 }

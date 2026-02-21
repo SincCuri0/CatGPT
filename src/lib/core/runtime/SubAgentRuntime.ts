@@ -3,6 +3,7 @@ import { Agent, AgentApiKeys, AgentConfig } from "../Agent";
 import { SubAgentRunState, SubAgentSpawnRequest, Tool, ToolExecutionContext } from "../types";
 import { subAgentCoordinator } from "./SubAgentCoordinator";
 import { clampTimeoutMs, subAgentRuntimeConfig } from "./config";
+import { ensureAgentWorkspace } from "../agentWorkspace";
 
 interface SubAgentRuntimeOptions {
     availableAgents: AgentConfig[];
@@ -43,6 +44,7 @@ function chooseTargetAgent(
 function buildSubAgentTaskPrompt(parentAgentName: string, task: string): string {
     return [
         `You were spawned by parent agent '${parentAgentName}'.`,
+        "Use only the focused task context below; do not assume access to the full parent chat transcript.",
         "Execute the task directly and return concise operational output.",
         "If you used tools, summarize what changed and reference concrete artifacts.",
         "Do not ask the user questions unless execution is blocked.",
@@ -204,6 +206,7 @@ export class SubAgentRuntime {
                     };
 
                     const childAgent = new Agent(childConfig);
+                    const childWorkspace = await ensureAgentWorkspace(childConfig);
                     const nestedRuntime = new SubAgentRuntime({
                         availableAgents: this.options.availableAgents,
                         availableTools: this.options.availableTools,
@@ -215,6 +218,10 @@ export class SubAgentRuntime {
                             ...this.options.parentExecutionContext,
                             squadId: this.options.parentExecutionContext?.squadId,
                             squadName: this.options.parentExecutionContext?.squadName,
+                            agentWorkspaceRoot: childWorkspace.rootAbsolutePath,
+                            agentWorkspaceRootRelative: childWorkspace.rootRelativePath,
+                            agentWorkspaceArtifactsDir: childWorkspace.artifactsAbsolutePath,
+                            agentWorkspaceArtifactsDirRelative: childWorkspace.artifactsRelativePath,
                         },
                         depth: this.depth + 1,
                         maxDepth: this.maxDepth,
@@ -234,6 +241,10 @@ export class SubAgentRuntime {
                         {
                             ...(this.options.parentExecutionContext || {}),
                             runId: childRunId,
+                            agentWorkspaceRoot: childWorkspace.rootAbsolutePath,
+                            agentWorkspaceRootRelative: childWorkspace.rootRelativePath,
+                            agentWorkspaceArtifactsDir: childWorkspace.artifactsAbsolutePath,
+                            agentWorkspaceArtifactsDirRelative: childWorkspace.artifactsRelativePath,
                             ...nestedRuntime.createExecutionContext(),
                         },
                     );

@@ -13,7 +13,6 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
             name: "App Forge Crew",
             goal: "Design, build, and test a production-ready application aligned with the user goal.",
             context: "Maintain concise plans, build incrementally, and validate each major change.",
-            mission: "Design, build, and test a production-ready application aligned with the user goal.",
             members: ["architect", "builder", "qa", "pm"],
             maxIterations: 8,
             orchestrator: {
@@ -39,7 +38,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Break goals into deliverable milestones, define architecture decisions, and reduce ambiguity before coding starts.",
                 provider: "groq",
                 model: "llama-3.3-70b-versatile",
-                tools: ["fs_read", "fs_write", "web_search"],
+                tools: ["mcp_all", "web_search"],
             },
             {
                 key: "builder",
@@ -48,7 +47,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Implement features with clean, maintainable code and keep changes scoped to the assigned task.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "fs_write", "shell_execute"],
+                tools: ["mcp_all", "shell_execute"],
             },
             {
                 key: "qa",
@@ -57,7 +56,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Design practical test plans, run focused validation, and report concrete defects with reproduction steps.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "shell_execute"],
+                tools: ["mcp_all", "shell_execute"],
             },
             {
                 key: "pm",
@@ -66,7 +65,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Track priorities, manage scope, and keep the team aligned to user outcomes and acceptance criteria.",
                 provider: "groq",
                 model: "gemma2-9b-it",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
         ],
     },
@@ -82,7 +81,6 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
             name: "Web Launch Pod",
             goal: "Ship a performant, user-friendly web product with reliable core flows.",
             context: "Prioritize accessibility, responsiveness, and measurable business outcomes.",
-            mission: "Ship a performant, user-friendly web product with reliable core flows.",
             members: ["ux", "frontend", "backend", "release"],
             maxIterations: 8,
             orchestrator: {
@@ -108,7 +106,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Define clear user flows, information hierarchy, and interaction patterns for real product usage.",
                 provider: "groq",
                 model: "gemma2-9b-it",
-                tools: ["web_search", "fs_write"],
+                tools: ["web_search", "mcp_all"],
             },
             {
                 key: "frontend",
@@ -117,7 +115,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Build intentional, responsive UI and preserve consistency with the existing visual system.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "fs_write", "shell_execute"],
+                tools: ["mcp_all", "shell_execute"],
             },
             {
                 key: "backend",
@@ -126,7 +124,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Design robust API and data layers, and keep implementation predictable and testable.",
                 provider: "groq",
                 model: "llama-3.3-70b-versatile",
-                tools: ["fs_read", "fs_write", "shell_execute"],
+                tools: ["mcp_all", "shell_execute"],
             },
             {
                 key: "release",
@@ -135,7 +133,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Audit release quality, catch regressions, and verify speed and reliability before launch.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "shell_execute"],
+                tools: ["mcp_all", "shell_execute"],
             },
         ],
     },
@@ -151,7 +149,6 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
             name: "Product Design Studio",
             goal: "Turn a product idea into validated flows, UX rationale, and actionable implementation specs.",
             context: "Balance user needs, business outcomes, and engineering feasibility.",
-            mission: "Turn a product idea into validated flows, UX rationale, and actionable implementation specs.",
             members: ["research", "product", "content", "systems"],
             maxIterations: 7,
             orchestrator: {
@@ -177,7 +174,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Gather concise market and user evidence, then summarize practical implications for product decisions.",
                 provider: "groq",
                 model: "llama-3.3-70b-versatile",
-                tools: ["web_search", "fs_write"],
+                tools: ["web_search", "mcp_all"],
             },
             {
                 key: "product",
@@ -186,7 +183,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Define user journeys, wireflow logic, and UX rationale that engineering can implement confidently.",
                 provider: "groq",
                 model: "gemma2-9b-it",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
             {
                 key: "content",
@@ -195,7 +192,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Write clear product copy, labels, and instructional language that reduces confusion.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
             {
                 key: "systems",
@@ -204,7 +201,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Translate product decisions into reusable UI patterns, tokens, and component-level guidance.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
         ],
     },
@@ -220,7 +217,6 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
             name: "Market Intel Cell",
             goal: "Produce a concise market brief, competitor matrix, and actionable go-to-market strategy.",
             context: "Use source-backed facts, call out assumptions, and separate signal from noise.",
-            mission: "Produce a concise market brief, competitor matrix, and actionable go-to-market strategy.",
             members: ["market", "competitive", "analyst", "strategy"],
             maxIterations: 6,
             orchestrator: {
@@ -246,7 +242,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Map customer segments, trends, and market dynamics with clear source-backed conclusions.",
                 provider: "groq",
                 model: "llama-3.3-70b-versatile",
-                tools: ["web_search", "fs_write"],
+                tools: ["web_search", "mcp_all"],
             },
             {
                 key: "competitive",
@@ -255,7 +251,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Compare top competitors by positioning, feature set, pricing, and strategic differentiation.",
                 provider: "groq",
                 model: "llama-3.1-8b-instant",
-                tools: ["web_search", "fs_write"],
+                tools: ["web_search", "mcp_all"],
             },
             {
                 key: "analyst",
@@ -264,7 +260,7 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Condense findings into executive-ready insights, decision risks, and prioritized opportunities.",
                 provider: "groq",
                 model: "gemma2-9b-it",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
             {
                 key: "strategy",
@@ -273,8 +269,9 @@ export const DEFAULT_SQUAD_BLUEPRINTS: SquadBlueprintDefinition[] = [
                 systemPrompt: "Convert research insights into practical positioning, channel, and launch recommendations.",
                 provider: "groq",
                 model: "llama-3.3-70b-versatile",
-                tools: ["fs_read", "fs_write"],
+                tools: ["mcp_all"],
             },
         ],
     },
 ];
+

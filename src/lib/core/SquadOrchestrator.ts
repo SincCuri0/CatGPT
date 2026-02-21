@@ -10,6 +10,7 @@ import type {
 import { AccessPermissionMode, Agent, AgentApiKeys, AgentConfig } from "./Agent";
 import { Message, Tool } from "./types";
 import { SubAgentRuntime } from "./runtime/SubAgentRuntime";
+import { ensureAgentWorkspace } from "./agentWorkspace";
 import {
     DEFAULT_SQUAD_ORCHESTRATOR_PROFILE,
     DirectorDecision,
@@ -24,7 +25,7 @@ import {
     normalizeSquadConfig,
 } from "./Squad";
 
-const DEFAULT_MAX_ITERATIONS = 6;
+const DEFAULT_MAX_ITERATIONS = 10;
 const DIRECTOR_HISTORY_LIMIT = 16;
 const GREETING_ONLY_PATTERN = /^(hi|hello|hey|yo|sup|howdy|good morning|good afternoon|good evening|thanks|thank you|ok|okay|k|cool|nice|lol|hmm|huh|yes|no|maybe|help)$/;
 const SMALL_TALK_ONLY_PATTERN = /^(how are you|whats up|what's up|who are you)$/;
@@ -100,8 +101,60 @@ function toStringArray(values: string[]): string {
     return values.length > 0 ? values.join("\n") : "None yet.";
 }
 
-function inferToolCapabilities(toolIds: string[]): string[] {
+interface McpCapabilitySnapshot {
+    hasFileIo: boolean;
+    hasFileWrite: boolean;
+    hasShell: boolean;
+    hasWebResearch: boolean;
+}
+
+function buildMcpCapabilitySnapshot(availableTools: Tool[]): McpCapabilitySnapshot {
+    let hasFileIo = false;
+    let hasFileWrite = false;
+    let hasShell = false;
+    let hasWebResearch = false;
+
+    for (const tool of availableTools) {
+        const normalizedId = (tool.id || "").trim().toLowerCase();
+        if (!normalizedId.startsWith("mcp:")) continue;
+
+        const match = /^mcp:([^:]+):(.+)$/.exec(normalizedId);
+        const serviceId = match?.[1] || "";
+        const toolName = match?.[2] || normalizedId;
+
+        const filesystemService = serviceId.includes("filesystem");
+        const shellService = /(shell|terminal|command)/.test(serviceId);
+        const webService = /(web|search|browser|fetch|serp)/.test(serviceId);
+
+        if (filesystemService) {
+            hasFileIo = true;
+            if (/(write|edit|append|create_file|move_file|rename|update)/.test(toolName)) {
+                hasFileWrite = true;
+            }
+        }
+
+        if (shellService && /(run|exec|execute|command|shell|spawn)/.test(toolName)) {
+            hasShell = true;
+        }
+
+        if (webService || /(web|search|browse|fetch|internet|source)/.test(toolName)) {
+            hasWebResearch = true;
+        }
+    }
+
+    if (hasFileWrite) hasFileIo = true;
+
+    return {
+        hasFileIo,
+        hasFileWrite,
+        hasShell,
+        hasWebResearch,
+    };
+}
+
+function inferToolCapabilities(toolIds: string[], mcpCapabilities: McpCapabilitySnapshot): string[] {
     const capabilities = new Set<string>();
+    const hasMcpAll = toolIds.includes("mcp_all");
 
     for (const toolId of toolIds) {
         if (toolId === "fs_read" || toolId === "fs_write" || toolId === "fs_list") {
@@ -113,10 +166,17 @@ function inferToolCapabilities(toolIds: string[]): string[] {
         if (toolId === "web_search") {
             capabilities.add("web-research");
         }
-        if (toolId === "sessions_spawn" || toolId === "sessions_await" || toolId === "sessions_list" || toolId === "sessions_cancel") {
+        if (toolId === "mcp_all") {
+            capabilities.add("mcp-services");
+        }
+        if (toolId === "subagents") {
             capabilities.add("delegation");
         }
     }
+
+    if (hasMcpAll && mcpCapabilities.hasFileIo) capabilities.add("file-io");
+    if (hasMcpAll && mcpCapabilities.hasShell) capabilities.add("shell");
+    if (hasMcpAll && mcpCapabilities.hasWebResearch) capabilities.add("web-research");
 
     return Array.from(capabilities);
 }
@@ -138,7 +198,11 @@ interface SquadRunOptions {
 
 type OrchestratorDebugLogFn = (message: string, data?: unknown) => void;
 
-function inferWorkerExecutionExpectation(instruction: string, worker: AgentConfig): WorkerExecutionExpectation {
+function inferWorkerExecutionExpectation(
+    instruction: string,
+    worker: AgentConfig,
+    mcpCapabilities: McpCapabilitySnapshot,
+): WorkerExecutionExpectation {
     const toolIds = worker.tools || [];
     if (toolIds.length === 0) {
         return {
@@ -149,10 +213,14 @@ function inferWorkerExecutionExpectation(instruction: string, worker: AgentConfi
     }
 
     const normalized = instruction.toLowerCase();
+    const hasMcpAll = toolIds.includes("mcp_all");
     const hasFileTool = toolIds.includes("fs_read") || toolIds.includes("fs_write") || toolIds.includes("fs_list")
-        || toolIds.includes("read_file") || toolIds.includes("write_file") || toolIds.includes("list_directory");
-    const hasShellTool = toolIds.includes("shell_execute") || toolIds.includes("execute_command");
-    const hasWebTool = toolIds.includes("web_search") || toolIds.includes("search_internet");
+        || toolIds.includes("read_file") || toolIds.includes("write_file") || toolIds.includes("list_directory")
+        || (hasMcpAll && mcpCapabilities.hasFileIo);
+    const hasShellTool = toolIds.includes("shell_execute") || toolIds.includes("execute_command")
+        || (hasMcpAll && mcpCapabilities.hasShell);
+    const hasWebTool = toolIds.includes("web_search") || toolIds.includes("search_internet")
+        || (hasMcpAll && mcpCapabilities.hasWebResearch);
 
     const hasExplicitFileReference = /(?:^|\s)(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?[A-Za-z0-9._/-]+\.[A-Za-z0-9]{1,10}(?=\s|$)/.test(normalized);
     const codingIntent = /(implement|build|create|develop|code|program|refactor|fix|add|update|modify)/.test(normalized);
@@ -237,9 +305,11 @@ function hasNoActionableObjective(userMessage: string): boolean {
     return false;
 }
 
-function hasWebResearchCapability(worker: AgentConfig): boolean {
+function hasWebResearchCapability(worker: AgentConfig, mcpCapabilities: McpCapabilitySnapshot): boolean {
     const toolIds = worker.tools || [];
-    return toolIds.includes("web_search") || toolIds.includes("search_internet");
+    return toolIds.includes("web_search")
+        || toolIds.includes("search_internet")
+        || (toolIds.includes("mcp_all") && mcpCapabilities.hasWebResearch);
 }
 
 function isLikelyBuildRequest(userMessage: string): boolean {
@@ -252,15 +322,19 @@ function selectBestEffortWorker(
     runtime: SquadRuntime,
     userMessage: string,
     preferResearch: boolean,
+    mcpCapabilities: McpCapabilitySnapshot,
 ): AgentConfig | null {
     const buildIntent = isLikelyBuildRequest(userMessage);
     const scored = runtime.workers.map((worker, index) => {
         const toolIds = worker.tools || [];
-        const hasWeb = hasWebResearchCapability(worker);
+        const hasMcpAll = toolIds.includes("mcp_all");
+        const hasWeb = hasWebResearchCapability(worker, mcpCapabilities);
         const hasFile = toolIds.includes("fs_write") || toolIds.includes("write_file")
             || toolIds.includes("fs_read") || toolIds.includes("read_file")
-            || toolIds.includes("fs_list") || toolIds.includes("list_directory");
-        const hasShell = toolIds.includes("shell_execute") || toolIds.includes("execute_command");
+            || toolIds.includes("fs_list") || toolIds.includes("list_directory")
+            || (hasMcpAll && mcpCapabilities.hasFileIo);
+        const hasShell = toolIds.includes("shell_execute") || toolIds.includes("execute_command")
+            || (hasMcpAll && mcpCapabilities.hasShell);
         const roleText = `${worker.name} ${worker.role} ${worker.description || ""}`.toLowerCase();
         const isResearchRole = /(research|analyst|investigat|fact|search)/.test(roleText);
         const isBuilderRole = /(engineer|developer|programmer|coder|architect|builder)/.test(roleText);
@@ -564,9 +638,10 @@ export class SquadOrchestrator {
         const goal = getSquadGoal(runtime.config);
         const context = getSquadContext(runtime.config);
         const workspaceFolder = `Squads/${sanitizeSquadFolderName(runtime.config.name)}`;
+        const mcpCapabilities = buildMcpCapabilitySnapshot(this.availableTools);
         const workers = runtime.workers.map((agent) => {
             const tools = agent.tools && agent.tools.length > 0 ? agent.tools.join(", ") : "No tools";
-            const capabilities = inferToolCapabilities(agent.tools || []);
+            const capabilities = inferToolCapabilities(agent.tools || [], mcpCapabilities);
             const style = agent.style || "assistant";
             const capabilitySummary = capabilities.length > 0 ? capabilities.join(", ") : "none";
             return `- ${agent.id}: ${agent.name} (${agent.role}, style=${style}) | Tools: ${tools} | Capabilities: ${capabilitySummary}`;
@@ -588,6 +663,7 @@ export class SquadOrchestrator {
                 "Interaction mode is MASTER LOG.",
                 "Optimize for practical outcomes and concise progress toward completion.",
                 "Use specialized workers for the right subtask instead of rotating blindly.",
+                "Prefer targeted edits to existing files instead of rewriting unaffected files.",
             ];
 
         if (interaction.userTurnPolicy === "every_round") {
@@ -623,6 +699,8 @@ Execution strategy:
 6. In live campaign mode, keep pacing responsive and leave space for user actions.
 7. Match task type to worker capabilities (for example: file-io, shell, web-research).
 8. For large artifacts, require incremental file writes in chunks instead of one giant write.
+9. For feature changes, inspect existing files first and patch only affected sections.
+10. Avoid full project regeneration unless the user explicitly requests a rewrite.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -881,13 +959,14 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
 
         const uncertaintyText = `${decision.summary} ${decision.userQuestion || ""}`.toLowerCase();
         const uncertaintySignals = /(more information|missing info|unclear|unknown|details|requirements|preferences|target platform)/;
-        const hasResearchWorker = runtime.workers.some((worker) => hasWebResearchCapability(worker));
+        const mcpCapabilities = buildMcpCapabilitySnapshot(this.availableTools);
+        const hasResearchWorker = runtime.workers.some((worker) => hasWebResearchCapability(worker, mcpCapabilities));
         const preferResearch = hasResearchWorker && (
             workLog.length === 0
             || uncertaintySignals.test(uncertaintyText)
         );
 
-        const fallbackWorker = selectBestEffortWorker(runtime, userMessage, preferResearch);
+        const fallbackWorker = selectBestEffortWorker(runtime, userMessage, preferResearch, mcpCapabilities);
         if (!fallbackWorker || !fallbackWorker.id) {
             return decision;
         }
@@ -906,6 +985,8 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
         instruction: string,
         workLog: string[],
         worker: AgentConfig,
+        workspaceRoot: string,
+        workspaceArtifactsDir: string,
     ): string {
         const interaction = getSquadInteractionConfig(runtime.config);
         const goal = getSquadGoal(runtime.config);
@@ -913,8 +994,13 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
         const previousOutputs = toStringArray(workLog);
         const workspaceFolder = `Squads/${sanitizeSquadFolderName(runtime.config.name)}`;
         const toolIds = worker.tools || [];
-        const capabilitySummary = inferToolCapabilities(toolIds);
-        const hasFileWrite = toolIds.includes("fs_write") || toolIds.includes("write_file");
+        const mcpCapabilities = buildMcpCapabilitySnapshot(this.availableTools);
+        const capabilitySummary = inferToolCapabilities(toolIds, mcpCapabilities);
+        const hasMcpAll = toolIds.includes("mcp_all");
+        const hasFileWrite = toolIds.includes("fs_write")
+            || toolIds.includes("write_file")
+            || (hasMcpAll && mcpCapabilities.hasFileWrite);
+        const hasNativeFsWrite = toolIds.includes("fs_write") || toolIds.includes("write_file");
         const styleGuidance = interaction.mode === "live_campaign"
             ? [
                 "Respond scene-ready and stay in character if your role implies it.",
@@ -925,17 +1011,29 @@ ${interactionInstructions.map((line, index) => `${index + 1}. ${line}`).join("\n
             : [
                 "Focus on practical execution output.",
                 `If creating persistent artifacts, use concise files under "${workspaceFolder}".`,
+                `Your agent workspace root is "${workspaceRoot}".`,
+                `Prefer writing generated artifacts under "${workspaceArtifactsDir}" unless the instruction requires another path.`,
                 "Write only what the orchestrator needs next.",
+                "Prefer editing existing files in place over rewriting full files.",
             ].join("\n");
-        const writeConstraint = hasFileWrite
+        const writeConstraint = hasFileWrite && hasNativeFsWrite
             ? [
                 "If a file is large, write it incrementally.",
                 "Use fs_write mode=\"overwrite\" for the first chunk and mode=\"append\" for later chunks.",
                 "Keep chunks compact (recommended <= 2000 chars per chunk).",
                 "If a target file already exists, read it first and preserve existing valid content unless explicitly asked to replace it.",
                 "Always set fs_write mode explicitly; do not rely on implicit defaults.",
+                "When changing a feature, patch the smallest relevant sections and preserve unrelated code.",
             ].join("\n")
-            : "Do not assume file-writing access if fs_write is unavailable.";
+            : hasFileWrite
+                ? [
+                    "Use the MCP filesystem write/edit tools for persistent artifacts.",
+                    "Match arguments to each tool schema exactly (for example, path/content fields).",
+                    "If writing large content, prefer multiple smaller writes over one giant write.",
+                    "Read existing files before replacing content unless full replacement is explicitly requested.",
+                    "When changing a feature, patch existing files and avoid regenerating unrelated files.",
+                ].join("\n")
+                : "Do not assume file-writing access if no write-capable tool is available.";
 
         return `You are part of squad "${runtime.config.name}".
 Goal: ${goal || "No explicit goal provided."}
@@ -965,6 +1063,7 @@ ${writeConstraint}`;
     ): Promise<SquadRunResult> {
         const runtime = this.getRuntime(config);
         const interaction = getSquadInteractionConfig(runtime.config);
+        const mcpCapabilities = buildMcpCapabilitySnapshot(this.availableTools);
         const toolAccessMode: AccessPermissionMode = runtime.config.accessMode === "full_access" ? "full_access" : "ask_always";
         const toolAccessGranted = options?.toolAccessGranted === true;
         const steps: SquadRunStep[] = [];
@@ -1028,6 +1127,7 @@ ${writeConstraint}`;
 
             const workerAgent = new Agent(worker);
             const workerRunId = uuidv4();
+            const workerWorkspace = await ensureAgentWorkspace(worker);
             const subAgentRuntime = new SubAgentRuntime({
                 availableAgents: this.availableAgents,
                 availableTools: this.availableTools,
@@ -1041,6 +1141,10 @@ ${writeConstraint}`;
                     runId: workerRunId,
                     toolAccessMode,
                     toolAccessGranted,
+                    agentWorkspaceRoot: workerWorkspace.rootAbsolutePath,
+                    agentWorkspaceRootRelative: workerWorkspace.rootRelativePath,
+                    agentWorkspaceArtifactsDir: workerWorkspace.artifactsAbsolutePath,
+                    agentWorkspaceArtifactsDirRelative: workerWorkspace.artifactsRelativePath,
                 },
             });
             const workerExecutionContext = {
@@ -1049,9 +1153,21 @@ ${writeConstraint}`;
                 runId: workerRunId,
                 toolAccessMode,
                 toolAccessGranted,
+                agentWorkspaceRoot: workerWorkspace.rootAbsolutePath,
+                agentWorkspaceRootRelative: workerWorkspace.rootRelativePath,
+                agentWorkspaceArtifactsDir: workerWorkspace.artifactsAbsolutePath,
+                agentWorkspaceArtifactsDirRelative: workerWorkspace.artifactsRelativePath,
                 ...subAgentRuntime.createExecutionContext(),
             };
-            const task = this.buildWorkerTask(runtime, userMessage, decision.instruction, workLog, worker);
+            const task = this.buildWorkerTask(
+                runtime,
+                userMessage,
+                decision.instruction,
+                workLog,
+                worker,
+                workerWorkspace.rootRelativePath,
+                workerWorkspace.artifactsRelativePath,
+            );
             const workerHistory: Message[] = [
                 ...history.slice(-8),
                 {
@@ -1077,7 +1193,7 @@ ${writeConstraint}`;
                 verifiedFileEffects: 0,
                 verifiedShellEffects: 0,
             };
-            const executionExpectation = inferWorkerExecutionExpectation(decision.instruction, worker);
+            const executionExpectation = inferWorkerExecutionExpectation(decision.instruction, worker, mcpCapabilities);
             let executionVerification = verifyWorkerExecution(
                 executionExpectation,
                 workerToolExecution.attempted,

@@ -45,3 +45,9 @@ package-lock.json
 /public/audio/*
 /data/user-settings.json
 /data/subagent-runs.json
+
+/src/generated/prisma
+/prisma/data/
+/ChatGPT Export
+/data/evolution
+/prisma/migrations

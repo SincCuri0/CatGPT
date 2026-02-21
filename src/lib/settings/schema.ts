@@ -173,25 +173,7 @@ function sanitizeMcpSettings(input: unknown): McpSettings {
   const sanitizedIncoming: McpServiceConfig[] = [];
 
   for (const rawEntry of incomingServices) {
-    const entry = (() => {
-      if (!isRecord(rawEntry)) return rawEntry;
-      const rawId = sanitizeText(rawEntry.id).toLowerCase();
-      // Migration: legacy invalid default service -> valid upstream server package
-      if (rawId === "mcp-fetch") {
-        return {
-          ...rawEntry,
-          id: "mcp-sequential-thinking",
-          name: sanitizeText(rawEntry.name) || "Sequential Thinking MCP",
-          description: "Structured reasoning/planning tools via MCP.",
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-          transport: "stdio",
-          timeoutMs: sanitizeTimeoutMs(rawEntry.timeoutMs, MCP_SERVICE_TIMEOUT_DEFAULT),
-        };
-      }
-      return rawEntry;
-    })();
-
+    const entry = rawEntry;
     if (!isRecord(entry)) continue;
     const rawId = sanitizeText(entry.id).toLowerCase();
     if (!rawId || seen.has(rawId)) continue;

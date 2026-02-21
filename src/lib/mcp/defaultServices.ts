@@ -6,7 +6,7 @@ export const DEFAULT_LOCAL_MCP_SERVICES: McpServiceConfig[] = [
     {
         id: "mcp-filesystem",
         name: "Filesystem MCP",
-        description: "File operations exposed via MCP (scoped to current workspace).",
+        description: "File operations exposed via MCP (runtime scopes paths to the active agent workspace).",
         enabled: true,
         transport: "stdio",
         command: "npx",
@@ -17,7 +17,7 @@ export const DEFAULT_LOCAL_MCP_SERVICES: McpServiceConfig[] = [
         id: "mcp-sequential-thinking",
         name: "Sequential Thinking MCP",
         description: "Structured reasoning/planning tools via MCP.",
-        enabled: true,
+        enabled: false,
         transport: "stdio",
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-sequential-thinking"],

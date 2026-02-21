@@ -1,0 +1,204 @@
+// CatGPT Local Database Schema (SQLite)
+// Zero-setup local-first database — auto-created as a file on first run.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────────────────────
+// Users
+// ───────────────────────────────────────────
+
+model User {
+  id          String   @id @default(cuid())
+  displayName String?
+  deviceId    String?  @unique
+  email       String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agents        Agent[]
+  squads        SquadMembership[]
+  conversations Conversation[]
+  imports       ImportRecord[]
+}
+
+// ───────────────────────────────────────────
+// Agents
+// ───────────────────────────────────────────
+
+model Agent {
+  id           String  @id @default(cuid())
+  name         String
+  role         String  @default("")
+  description  String?
+  systemPrompt String  @default("")
+  style        String?
+  voiceId      String?
+  provider     String?
+  model        String?
+  tools        String  @default("[]") // JSON array of tool identifiers
+
+  // Import provenance
+  source        String @default("native")
+  sourceGizmoId String?
+
+  // Ownership
+  createdBy User   @relation(fields: [userId], references: [id])
+  userId    String
+
+  conversations Conversation[]
+  squadAgents   SquadAgent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([sourceGizmoId])
+}
+
+// ───────────────────────────────────────────
+// Squads (agent groups / projects)
+// ───────────────────────────────────────────
+
+model Squad {
+  id      String  @id @default(cuid())
+  name    String
+  goal    String?
+  context String?
+
+  // Import provenance
+  source        String @default("native")
+  sourceGizmoId String?
+
+  members       SquadMembership[]
+  agents        SquadAgent[]
+  conversations Conversation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SquadMembership {
+  id      String @id @default(cuid())
+  squad   Squad  @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  squadId String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  role    String @default("member")
+
+  @@unique([squadId, userId])
+}
+
+model SquadAgent {
+  id      String @id @default(cuid())
+  squad   Squad  @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  squadId String
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId String
+
+  @@unique([squadId, agentId])
+}
+
+// ───────────────────────────────────────────
+// Conversations
+// ───────────────────────────────────────────
+
+model Conversation {
+  id    String @id @default(cuid())
+  title String
+
+  // Associations
+  agent   Agent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  agentId String?
+  squad   Squad?  @relation(fields: [squadId], references: [id], onDelete: SetNull)
+  squadId String?
+  user    User    @relation(fields: [userId], references: [id])
+  userId  String
+
+  // Import provenance
+  source   String  @default("native")
+  sourceId String? @unique // ChatGPT conversation UUID for dedup
+
+  // Organization
+  isArchived Boolean @default(false)
+  tags       String  @default("[]") // JSON array of tag strings
+
+  // Relations
+  messages       Message[]
+  importRecord   ImportRecord? @relation(fields: [importRecordId], references: [id], onDelete: SetNull)
+  importRecordId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([squadId])
+  @@index([source])
+}
+
+// ───────────────────────────────────────────
+// Messages
+// ───────────────────────────────────────────
+
+model Message {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+
+  role        String // "user" | "assistant" | "system" | "tool"
+  content     String
+  contentType String @default("text")
+
+  name    String?
+  agentId String?
+  model   String?
+
+  // Tool execution
+  toolName String?
+  toolArgs String?
+
+  // Thinking / reasoning
+  isThinking Boolean @default(false)
+
+  // Branch support (tree-structured conversations)
+  parentId    String?
+  branchIndex Int     @default(0)
+  sortOrder   Int     @default(0)
+
+  // Import provenance
+  sourceId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([parentId])
+}
+
+// ───────────────────────────────────────────
+// Import tracking
+// ───────────────────────────────────────────
+
+model ImportRecord {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  source   String  @default("chatgpt")
+  filename String?
+
+  // Import stats (JSON: { conversations, agents, squads, messages })
+  stats String @default("{}")
+
+  conversations Conversation[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}

@@ -77,7 +77,7 @@ export const ShellExecuteTool: Tool = {
         },
         required: ["command"]
     },
-    execute: async (args: unknown) => {
+    execute: async (args: unknown, context) => {
         const command = typeof (args as { command?: unknown })?.command === "string"
             ? (args as { command: string }).command
             : "";
@@ -91,31 +91,56 @@ export const ShellExecuteTool: Tool = {
             };
         }
 
+        const executionCwd = typeof context?.agentWorkspaceRoot === "string" && context.agentWorkspaceRoot.trim().length > 0
+            ? context.agentWorkspaceRoot
+            : process.cwd();
+
         try {
             // Security warning: exact command execution
             const { stdout, stderr } = await execAsync(command, {
-                cwd: process.cwd(),
+                cwd: executionCwd,
                 timeout: 120_000,
                 maxBuffer: 2 * 1024 * 1024,
             });
             const output = stderr
                 ? `STDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`
                 : (stdout || "Command executed successfully with no output.");
-            return shellSuccessResult(command, output, stderr);
+            const result = shellSuccessResult(command, output, stderr);
+            if (result.artifacts[0]) {
+                result.artifacts[0].metadata = {
+                    ...(result.artifacts[0].metadata || {}),
+                    cwd: executionCwd,
+                };
+            }
+            return result;
         } catch (error: unknown) {
             if (error instanceof Error) {
                 const detail = error as Error & { stdout?: string; stderr?: string; code?: number | string };
                 const formatted = `Error execution command: ${detail.message}\nSTDOUT: ${detail.stdout ?? ""}\nSTDERR: ${detail.stderr ?? ""}`;
-                return shellErrorResult(
+                const result = shellErrorResult(
                     formatted,
                     command,
                     detail.stdout ?? "",
                     detail.stderr ?? "",
                     detail.code ?? null,
                 );
+                if (result.artifacts[0]) {
+                    result.artifacts[0].metadata = {
+                        ...(result.artifacts[0].metadata || {}),
+                        cwd: executionCwd,
+                    };
+                }
+                return result;
             }
             const formatted = `Error execution command: ${String(error)}`;
-            return shellErrorResult(formatted, command, "", "", null);
+            const result = shellErrorResult(formatted, command, "", "", null);
+            if (result.artifacts[0]) {
+                result.artifacts[0].metadata = {
+                    ...(result.artifacts[0].metadata || {}),
+                    cwd: executionCwd,
+                };
+            }
+            return result;
         }
     }
 };

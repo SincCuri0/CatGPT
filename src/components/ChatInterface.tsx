@@ -7,6 +7,10 @@ import { Message } from "@/lib/core/types";
 import { SquadInteractionMode } from "@/lib/core/Squad";
 import { Send, Paperclip, Mic, MicOff, Volume2, VolumeX, Loader2, SkipForward, Cat, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTTS, useSTT } from "@/hooks/useAudio";
 
@@ -27,6 +31,28 @@ export interface SlashCommandOption {
     description: string;
 }
 
+function normalizeMathMarkdown(text: string): string {
+    if (!text) return text;
+
+    let normalized = text
+        .replace(/\\\[\s*([\s\S]*?)\s*\\\]/g, (_match, body: string) => `$$\n${body.trim()}\n$$`)
+        .replace(/\\\(([\s\S]*?)\\\)/g, (_match, body: string) => `$${body.trim()}$`);
+
+    // Some models emit display math as lines with bare [ ... ] around LaTeX.
+    normalized = normalized.replace(/^[ \t]*\[\s*\n([\s\S]*?)\n[ \t]*\]\s*$/gm, (match, body: string) => {
+        const inner = body.trim();
+        const lineCount = inner ? inner.split(/\r?\n/).length : 0;
+        const looksMath = /\\[A-Za-z]+|[_^{}]|→|<-|->|⟶|⟵/.test(inner);
+        const looksLikeMarkdownBlock = /(^|\n)\s*(?:[-*+]\s|\d+\.\s|#+\s)|\|/.test(inner);
+        if (!looksMath) return match;
+        if (lineCount > 3 || inner.length > 220) return match;
+        if (looksLikeMarkdownBlock) return match;
+        return `$$\n${inner}\n$$`;
+    });
+
+    return normalized;
+}
+
 function TypewriterContent({
     text,
     enabled,
@@ -36,7 +62,8 @@ function TypewriterContent({
     enabled: boolean;
     onComplete?: () => void;
 }) {
-    const [visibleChars, setVisibleChars] = useState(() => (enabled ? 0 : text.length));
+    const normalizedText = useMemo(() => normalizeMathMarkdown(text), [text]);
+    const [visibleChars, setVisibleChars] = useState(() => (enabled ? 0 : normalizedText.length));
     const didCompleteRef = useRef(false);
 
     useEffect(() => {
@@ -48,22 +75,22 @@ function TypewriterContent({
             return;
         }
 
-        if (visibleChars >= text.length && !didCompleteRef.current) {
+        if (visibleChars >= normalizedText.length && !didCompleteRef.current) {
             didCompleteRef.current = true;
             onComplete?.();
         }
-    }, [enabled, onComplete, text.length, visibleChars]);
+    }, [enabled, normalizedText.length, onComplete, visibleChars]);
 
     useEffect(() => {
-        if (!enabled || visibleChars >= text.length) {
+        if (!enabled || visibleChars >= normalizedText.length) {
             return;
         }
 
-        const step = text.length > 1800 ? 12 : text.length > 900 ? 8 : text.length > 450 ? 5 : 3;
+        const step = normalizedText.length > 1800 ? 12 : normalizedText.length > 900 ? 8 : normalizedText.length > 450 ? 5 : 3;
         const intervalId = window.setInterval(() => {
             setVisibleChars((prev) => {
-                const next = Math.min(text.length, prev + step);
-                if (next >= text.length) {
+                const next = Math.min(normalizedText.length, prev + step);
+                if (next >= normalizedText.length) {
                     window.clearInterval(intervalId);
                 }
                 return next;
@@ -71,13 +98,22 @@ function TypewriterContent({
         }, 16);
 
         return () => window.clearInterval(intervalId);
-    }, [enabled, text.length, visibleChars]);
+    }, [enabled, normalizedText.length, visibleChars]);
 
-    if (enabled && visibleChars < text.length) {
-        return <div className="whitespace-pre-wrap">{text.slice(0, visibleChars)}</div>;
-    }
+    const visibleText = enabled ? normalizedText.slice(0, visibleChars) : normalizedText;
+    const isTyping = enabled && visibleChars < normalizedText.length;
 
-    return <ReactMarkdown>{text}</ReactMarkdown>;
+    return (
+        <>
+            <ReactMarkdown
+                remarkPlugins={isTyping ? [remarkGfm, remarkBreaks] : [remarkGfm, remarkBreaks, remarkMath]}
+                rehypePlugins={isTyping ? [] : [rehypeKatex]}
+            >
+                {visibleText}
+            </ReactMarkdown>
+            {isTyping && <span className="ml-0.5 inline-block animate-pulse text-[#8e8ea0]">▍</span>}
+        </>
+    );
 }
 
 export function ChatInterface({

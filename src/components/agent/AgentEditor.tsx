@@ -2,7 +2,7 @@
 
 import { AccessPermissionMode, AgentConfig, AgentStyle } from "@/lib/core/Agent";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield } from "lucide-react";
+import { Save, X, Volume2, Cpu, Wrench, Sparkles, User, MessageCircle, Shield, Brain } from "lucide-react";
 import { GROQ_TTS_VOICES, EDGE_TTS_VOICES, BROWSER_TTS_VOICES, loadAudioSettings, saveAudioSettings, TTSProvider } from "@/lib/audio/types";
 import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_OPTIONS } from "@/lib/llm/constants";
 import {
@@ -17,6 +17,8 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { debugClientError, debugClientLog } from "@/lib/debug/client";
 import { useModelCatalog } from "@/hooks/useModelCatalog";
+import { normalizeToolIds } from "@/lib/core/tooling/toolIds";
+import { DEFAULT_EVOLUTION_HOOKS, DEFAULT_EVOLUTION_SCHEDULE_PROMPT, normalizeEvolutionConfig } from "@/lib/evolution/types";
 
 interface AgentEditorProps {
     initialData?: AgentConfig;
@@ -56,15 +58,9 @@ const TTS_PROVIDERS = [
 
 const AVAILABLE_TOOLS = [
     { id: "web_search", name: "Web Search", desc: "Search the internet", icon: "🔍" },
-    { id: "fs_read", name: "Read Files", desc: "Read local files", icon: "📄" },
-    { id: "fs_write", name: "Write Files", desc: "Create & edit files", icon: "✏️" },
-    { id: "fs_list", name: "List Files", desc: "List directory contents", icon: "🗂️" },
     { id: "shell_execute", name: "Terminal", desc: "Run shell commands", icon: "⌨️" },
-    { id: "mcp_all", name: "MCP Tools", desc: "Use all enabled local MCP services", icon: "🔌" },
-    { id: "sessions_spawn", name: "Spawn Sub-Agent", desc: "Delegate a task to another agent", icon: "🐾" },
-    { id: "sessions_await", name: "Await Sub-Agent", desc: "Wait for a delegated run to complete", icon: "⏳" },
-    { id: "sessions_list", name: "List Sub-Agents", desc: "Inspect delegated run statuses", icon: "📋" },
-    { id: "sessions_cancel", name: "Cancel Sub-Agent", desc: "Cancel a delegated run", icon: "🛑" },
+    { id: "mcp_all", name: "MCP Tools", desc: "Filesystem + all enabled local MCP services", icon: "🔌" },
+    { id: "subagents", name: "Sub-Agents", desc: "Delegate tasks and manage delegated runs", icon: "🐾" },
 ];
 
 const ACCESS_PERMISSION_OPTIONS: Array<{
@@ -85,6 +81,11 @@ const ACCESS_PERMISSION_OPTIONS: Array<{
 ];
 
 const FALLBACK_LLM_PROVIDERS = buildFallbackCatalogProviders();
+const EVOLUTION_HOOK_LABELS: Record<string, string> = {
+    memory_capture: "Memory Capture",
+    skill_snapshot: "Skill Snapshot",
+    self_reflection: "Self Reflection",
+};
 
 function formatCompactTokenCount(value?: number): string | null {
     if (typeof value !== "number" || value <= 0) return null;
@@ -121,7 +122,7 @@ function getModelBadges(model: {
 }
 
 export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps) {
-    const { apiKey, apiKeys, debugLogsEnabled } = useSettings();
+    const { apiKeys, debugLogsEnabled } = useSettings();
     const { providers: llmProviders, isRefreshingModels, refreshModels } = useModelCatalog();
     const [formData, setFormData] = useState<AgentConfig>(() => {
         const seed = initialData || {
@@ -139,7 +140,9 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
 
         return {
             ...seed,
+            tools: normalizeToolIds(seed.tools),
             accessMode: seed.accessMode === "full_access" ? "full_access" : "ask_always",
+            evolution: normalizeEvolutionConfig(seed.evolution),
         };
     });
 
@@ -369,6 +372,7 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
     ]);
     const hasToolModelSelectionGap = hasSelectedTools && (!selectedModel || !selectedModelSupportsToolUse);
     const canSaveAgent = formData.name.trim().length > 0 && !hasToolModelSelectionGap;
+    const evolution = normalizeEvolutionConfig(formData.evolution);
 
     const handleGenerateInstructions = async () => {
         setIsGeneratingPrompt(true);
@@ -384,7 +388,6 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "x-groq-api-key": apiKey || "",
                     "x-api-keys": JSON.stringify(apiKeys),
                     ...(debugLogsEnabled ? { "x-debug-logs": "1" } : {}),
                 },
@@ -915,6 +918,250 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                                 })}
                             </div>
                         </div>
+
+                        <div className="pt-3 space-y-2">
+                            <label className="text-xs font-medium text-[#b4b4b4] flex items-center gap-1.5">
+                                <Brain size={12} />
+                                Self-Evolving Mode
+                            </label>
+                            <p className="text-[11px] text-[#676767]">
+                                Gives this cat a persistent `SOUL.md` identity, memory files, skill snapshots, self-reflection, and optional autonomous heartbeat runs.
+                            </p>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setFormData((prev) => {
+                                        const current = normalizeEvolutionConfig(prev.evolution);
+                                        return {
+                                            ...prev,
+                                            evolution: {
+                                                ...current,
+                                                enabled: !current.enabled,
+                                            },
+                                        };
+                                    });
+                                }}
+                                className={`w-full px-4 py-3 rounded-lg border text-left transition-all ${evolution.enabled
+                                    ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                    : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                    }`}
+                            >
+                                <div className={`text-sm font-medium ${evolution.enabled ? "text-white" : "text-[#ececec]"}`}>
+                                    {evolution.enabled ? "Enabled" : "Disabled"}
+                                </div>
+                                <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                    {evolution.enabled
+                                        ? "This cat will read/write persistent memory and can run autonomously."
+                                        : "No evolution memory or autonomous loop will run."}
+                                </div>
+                            </button>
+
+                            {evolution.enabled && (
+                                <div className="space-y-3 pt-1">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFormData((prev) => {
+                                                    const current = normalizeEvolutionConfig(prev.evolution);
+                                                    return {
+                                                        ...prev,
+                                                        evolution: {
+                                                            ...current,
+                                                            memoryEnabled: !current.memoryEnabled,
+                                                        },
+                                                    };
+                                                });
+                                            }}
+                                            className={`px-3 py-2.5 rounded-lg border text-left transition-all ${evolution.memoryEnabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">Memory Files</div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                {evolution.memoryEnabled ? "Capture MEMORY.md + daily logs." : "Do not update memory files."}
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFormData((prev) => {
+                                                    const current = normalizeEvolutionConfig(prev.evolution);
+                                                    return {
+                                                        ...prev,
+                                                        evolution: {
+                                                            ...current,
+                                                            skillSnapshotsEnabled: !current.skillSnapshotsEnabled,
+                                                        },
+                                                    };
+                                                });
+                                            }}
+                                            className={`px-3 py-2.5 rounded-lg border text-left transition-all ${evolution.skillSnapshotsEnabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">Skill Snapshots</div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                {evolution.skillSnapshotsEnabled ? "Store new skill markdown snapshots." : "Skip automatic skill files."}
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFormData((prev) => {
+                                                    const current = normalizeEvolutionConfig(prev.evolution);
+                                                    return {
+                                                        ...prev,
+                                                        evolution: {
+                                                            ...current,
+                                                            selfAwarenessEnabled: !current.selfAwarenessEnabled,
+                                                        },
+                                                    };
+                                                });
+                                            }}
+                                            className={`px-3 py-2.5 rounded-lg border text-left transition-all ${evolution.selfAwarenessEnabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">Self Awareness</div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                {evolution.selfAwarenessEnabled ? "Track level/mood/summary." : "Disable reflection profile updates."}
+                                            </div>
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className="text-[11px] text-[#8e8ea0]">Hook Pipeline</label>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            {DEFAULT_EVOLUTION_HOOKS.map((hookId) => {
+                                                const enabled = evolution.hooks.includes(hookId);
+                                                return (
+                                                    <button
+                                                        key={hookId}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setFormData((prev) => {
+                                                                const current = normalizeEvolutionConfig(prev.evolution);
+                                                                const nextHooks = current.hooks.includes(hookId)
+                                                                    ? current.hooks.filter((candidate) => candidate !== hookId)
+                                                                    : [...current.hooks, hookId];
+                                                                return {
+                                                                    ...prev,
+                                                                    evolution: {
+                                                                        ...current,
+                                                                        hooksEnabled: true,
+                                                                        hooks: nextHooks,
+                                                                    },
+                                                                };
+                                                            });
+                                                        }}
+                                                        className={`px-3 py-2 rounded-lg border text-left transition-all ${enabled
+                                                            ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                            : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                            }`}
+                                                    >
+                                                        <div className="text-xs font-medium text-[#ececec]">
+                                                            {EVOLUTION_HOOK_LABELS[hookId] || hookId}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className="text-[11px] text-[#8e8ea0]">Autonomous Schedule</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFormData((prev) => {
+                                                    const current = normalizeEvolutionConfig(prev.evolution);
+                                                    return {
+                                                        ...prev,
+                                                        evolution: {
+                                                            ...current,
+                                                            schedule: {
+                                                                ...current.schedule,
+                                                                enabled: !current.schedule.enabled,
+                                                            },
+                                                        },
+                                                    };
+                                                });
+                                            }}
+                                            className={`w-full px-3 py-2.5 rounded-lg border text-left transition-all ${evolution.schedule.enabled
+                                                ? "bg-[#10a37f]/10 border-[#10a37f] ring-1 ring-[#10a37f]"
+                                                : "bg-[#2f2f2f] border-[#424242] hover:border-[#676767]"
+                                                }`}
+                                        >
+                                            <div className="text-xs font-medium text-[#ececec]">
+                                                {evolution.schedule.enabled ? "Heartbeat schedule enabled" : "Heartbeat schedule disabled"}
+                                            </div>
+                                            <div className="text-[10px] text-[#8e8ea0] mt-0.5">
+                                                Runs this cat periodically in the background while the app is open.
+                                            </div>
+                                        </button>
+
+                                        {evolution.schedule.enabled && (
+                                            <div className="space-y-2 bg-[#232323] border border-[#3a3a3a] rounded-lg p-3">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] uppercase tracking-wide text-[#8e8ea0]">Every (minutes)</label>
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        max={1440}
+                                                        value={evolution.schedule.everyMinutes}
+                                                        onChange={(event) => {
+                                                            const parsed = Number(event.target.value);
+                                                            const next = Number.isFinite(parsed) ? Math.max(1, Math.min(1440, Math.floor(parsed))) : 30;
+                                                            setFormData((prev) => {
+                                                                const current = normalizeEvolutionConfig(prev.evolution);
+                                                                return {
+                                                                    ...prev,
+                                                                    evolution: {
+                                                                        ...current,
+                                                                        schedule: {
+                                                                            ...current.schedule,
+                                                                            everyMinutes: next,
+                                                                        },
+                                                                    },
+                                                                };
+                                                            });
+                                                        }}
+                                                        className="w-full bg-[#2f2f2f] border border-[#424242] rounded-lg px-3 py-2 text-sm text-[#ececec] focus:outline-none focus:border-[#10a37f]"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] uppercase tracking-wide text-[#8e8ea0]">Autonomy Prompt</label>
+                                                    <textarea
+                                                        value={evolution.schedule.prompt || DEFAULT_EVOLUTION_SCHEDULE_PROMPT}
+                                                        onChange={(event) => {
+                                                            setFormData((prev) => {
+                                                                const current = normalizeEvolutionConfig(prev.evolution);
+                                                                return {
+                                                                    ...prev,
+                                                                    evolution: {
+                                                                        ...current,
+                                                                        schedule: {
+                                                                            ...current.schedule,
+                                                                            prompt: event.target.value,
+                                                                        },
+                                                                    },
+                                                                };
+                                                            });
+                                                        }}
+                                                        className="w-full min-h-[90px] bg-[#2f2f2f] border border-[#424242] rounded-lg px-3 py-2 text-xs text-[#ececec] focus:outline-none focus:border-[#10a37f] resize-y"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>
@@ -922,7 +1169,9 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
             {/* Footer */}
             <div className="p-4 border-t border-[#424242] bg-[#1f1f1f] flex items-center justify-between mt-auto">
                 <div className="text-[11px] text-[#565656]">
-                    {formData.name ? `${formData.name} • ${formData.style || "assistant"} • ${(formData.tools || []).length} tools` : "Fill in the details above"}
+                    {formData.name
+                        ? `${formData.name} • ${formData.style || "assistant"} • ${(formData.tools || []).length} tools${evolution.enabled ? " • evolving" : ""}`
+                        : "Fill in the details above"}
                 </div>
                 <div className="flex gap-3">
                     <button
@@ -934,8 +1183,10 @@ export function AgentEditor({ initialData, onSave, onCancel }: AgentEditorProps)
                     <button
                         onClick={() => onSave({
                             ...formData,
+                            tools: normalizeToolIds(formData.tools),
                             reasoningEffort: formData.reasoningEffort || DEFAULT_REASONING_EFFORT,
                             accessMode: formData.accessMode === "full_access" ? "full_access" : "ask_always",
+                            evolution: normalizeEvolutionConfig(formData.evolution),
                         })}
                         disabled={!canSaveAgent}
                         className="flex items-center gap-2 px-6 py-2 bg-[#10a37f] hover:bg-[#1a7f64] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium shadow-sm transition-all"

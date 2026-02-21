@@ -3,34 +3,76 @@
 CatGPT is a local-first, multi-agent chat workspace built on Next.js. You can create and edit your 'Litter' (agents), assemble collaborative 'Squads', run tool-enabled workflows, and optionally use voice input/output.
 
 ## Current State (Repo Snapshot)
-This codebase now supports much more than the original single-provider setup:
-
 - Multi-provider LLM routing: Groq, OpenAI, Anthropic, Google Gemini
 - Dynamic model catalog fetching from provider APIs with local cache fallback
-- Squad orchestration with a sub-agent runtime (`sessions_spawn`, `sessions_await`, `sessions_list`)
+- Squad orchestration with a sub-agent runtime (`subagents`)
 - Squad blueprint library with import/export JSON support
 - Slash command support for generation flows (`/create_cats`, `/create_squad`)
+- Context-management safeguards in agent runtime:
+  - context window guards
+  - turn-boundary history compaction with staged summaries
+  - head/tail preservation for oversized messages
+  - orphaned tool-call result repair
 - Voice stack:
   - TTS: Groq, Edge, ElevenLabs, browser fallback
   - STT: Groq Whisper API + browser speech fallback in UI
 - Persisted user settings API (`/api/user-settings`) currently used for UI sidebar width
 
 ## Core Features
-- Single-agent chat and squad chat from one interface
-- Agent editor for:
-  - Identity, role, style, and instructions
-  - Provider/model selection
-  - Reasoning effort selection (`none|low|medium|high`) when model supports it
-  - Voice provider + voice selection
-  - Tool enablement per agent
-- Squad editor with interaction modes:
-  - `master_log`: autonomous worker execution with orchestration trace panel
-  - `live_campaign`: in-chat worker turns with sequenced typewriter/audio playback (chat live with your team tfor more a collaborative working style)
-- Conversation persistence with rename/delete and per-conversation model overrides
-- Debug logging toggle (adds `x-debug-logs: 1` to API requests)
+## Core Features & Real-World Use Cases
 
-## Important Limitations (As Implemented)
-- `web_search` tool is currently a mock/stub response, not a real search provider integration.
+- **Single-Agent Chat & Squad Chat**
+  - *Use Case 1*: Brainstorming with a single AI agent to draft a blog post, summarize research, or debug code.
+  - *Use Case 2*: Assemble a squad (e.g., "App Forge Crew") to collaboratively design, build, and test a new app, with each agent acting as architect, developer, QA, and PM—each with their own role and expertise.
+  - *Use Case 3*: Run a "live campaign" squad for creative writing, where each agent role-plays a character in a story, and the user interacts with the whole cast in turn-based chat.
+
+- **Agent Editor**
+  - *Use Case 1*: Create a "Data Analyst Cat" agent with access to web search and shell tools, set its style to "expert," and configure it to use a specific LLM provider for advanced data queries.
+  - *Use Case 2*: Enable voice output for a "Narrator Cat" agent, choosing a custom TTS voice for accessibility or presentation.
+  - *Use Case 3*: Set up an agent to self-evolve, capturing persistent memory and skill snapshots for long-running research or project management tasks.
+
+- **Squad Editor & Blueprints**
+  - *Use Case 1*: Import a "Web Launch Pod" blueprint to instantly spin up a team for a website launch, including UX, frontend, backend, and QA agents, each with tailored prompts and tool access.
+  - *Use Case 2*: Export a custom squad as a JSON blueprint to share with teammates or reuse in future projects.
+  - *Use Case 3*: Use the squad editor to define a product design studio, balancing user research, UX, and engineering feasibility for a new product spec.
+
+- **Interaction Modes**
+  - *Master Log*: Run a squad autonomously to deliver a full implementation plan or codebase, with a traceable log of each agent’s contributions.
+  - *Live Campaign*: Use turn-based, in-chat squad interaction for collaborative storytelling, D&D sessions, or stepwise project delivery, with typewriter and audio playback for immersion.
+
+- **Tool-Enabled Workflows**
+  - *Use Case 1*: Give an agent shell access to automate file operations, run scripts, or validate code on your local machine (with permission controls).
+  - *Use Case 2*: Use the web search tool to have an agent gather up-to-date information, compare competitors, or summarize news.
+  - *Use Case 3*: Leverage the subagents tool to delegate subtasks (e.g., "generate test cases" or "fetch data") to autonomous sub-agents, with full run management (spawn, await, list, cancel).
+
+- **Voice Stack (TTS & STT)**
+  - *Use Case 1*: Dictate messages to agents using voice input (STT), ideal for hands-free operation or accessibility.
+  - *Use Case 2*: Enable TTS for agents to read responses aloud, useful for presentations, accessibility, or multitasking.
+  - *Use Case 3*: Assign different voices to squad members for a more engaging, character-driven chat experience.
+
+- **Self-Evolving Agents & Memory**
+  - *Use Case 1*: Enable persistent memory for a "Research Cat" agent to accumulate knowledge and context over weeks, supporting long-term projects.
+  - *Use Case 2*: Schedule autonomous evolution runs for agents to reflect, update skills, and adapt to new requirements without manual intervention.
+
+- **Conversation Management**
+  - *Use Case 1*: Save, rename, and revisit conversations with agents or squads, maintaining context for ongoing projects or support tickets.
+  - *Use Case 2*: Override models or settings per conversation for targeted experiments or A/B testing.
+
+- **Debug Logging & Runtime Inspector**
+  - *Use Case 1*: Enable debug logs to trace API requests and agent reasoning for troubleshooting or transparency.
+  - *Use Case 2*: Use the Runtime Inspector panel to monitor agent state, scheduler tasks, and system metrics in real time—essential for advanced users and developers.
+
+- **Skill Import & Management**
+  - *Use Case 1*: Import new skills (tool definitions, workflows) from markdown or JSON to extend agent capabilities for specialized domains.
+  - *Use Case 2*: Attach custom skills to agents for unique workflows, such as data scraping, report generation, or integration with external APIs.
+
+- **Scheduler & Autonomous Ops**
+  - *Use Case 1*: Set up scheduled tasks for agents (e.g., daily report generation, periodic data sync) using the Scheduler panel.
+  - *Use Case 2*: Monitor and manage all scheduled and running tasks, including error handling and manual triggers.
+
+---
+These examples reflect the real, practical workflows enabled by CatGPT’s current architecture. For more, see the built-in squad blueprints and try combining features for your own use cases.
+- `web_search` uses live DuckDuckGo Instant Answer API and may return limited/noisy results for some queries.
 - `/api/tts` with `provider: "openai"` is not implemented yet (returns `501`).
 - `/api/stt` currently forwards to Groq Whisper only.
 - File and shell tools run server-side and are powerful by design; treat this as local/dev tooling unless you add stronger isolation/auth.
@@ -106,12 +148,15 @@ Node.js 20+ is recommended for Next.js 16.
 | `SUBAGENT_STORE_MODE` | `file` | `file` or `memory` |
 | `SUBAGENT_STORE_PATH` | `data/subagent-runs.json` | File store path |
 | `RUNTIME_ADMIN_TOKEN` | unset | Required in production for runtime ops endpoint |
+| `MCP_INCLUDE_REASONING_TOOLS` | `0` | Set `1` to include `mcp-sequential-thinking` tools in `mcp_all` |
 
 ## NPM Scripts
 - `npm run dev` - Start dev server
 - `npm run build` - Build for production
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint
+- `npm run test` - Run runtime/unit tests (Vitest)
+- `npm run test:watch` - Run Vitest in watch mode
 
 ## Architecture and Contributor Docs
 - `docs/agentic-runtime-v2.md` - End-to-end v2 runtime architecture, permissions model, sub-agent runtime, and step-by-step guide for adding new agent skills/tools.
@@ -133,6 +178,12 @@ Node.js 20+ is recommended for Next.js 16.
 | `/api/stt` | `POST` | Speech-to-text transcription |
 | `/api/elevenlabs/voices` | `GET` | ElevenLabs voice list (`?refresh=1`) |
 | `/api/runtime/subagents` | `GET` | Inspect/await/list sub-agent runs |
+| `/api/runtime/state` | `GET` | Runtime state snapshot/replay stream (`channel`, `runId`, `agentId`, `since`, `stream=1`) |
+| `/api/runtime/tasks` | `GET`, `POST` | Scheduler task inspection and control (`enqueue`, `cancel`, `repair`) |
+| `/api/runtime/observability` | `GET`, `POST` | Runtime counters + scheduler/state metrics, and clear action |
+| `/api/evolution/status` | `POST` | Read evolving memory/profile status for an agent |
+| `/api/evolution/run` | `POST` | Trigger a manual autonomous evolution run |
+| `/api/evolution/heartbeat` | `POST` | Execute due scheduled evolution runs |
 
 Notable request headers:
 - `x-api-keys`: JSON map of provider keys for local/session overrides
@@ -143,21 +194,17 @@ Notable request headers:
 
 | Tool ID | Purpose |
 | --- | --- |
-| `web_search` | Internet search (currently mock output) |
-| `fs_read` | Read file contents |
-| `fs_write` | Write/append file contents with safeguards |
-| `fs_list` | List directory contents |
+| `web_search` | Internet search (live DuckDuckGo Instant Answer API) |
 | `shell_execute` | Execute shell commands |
-| `mcp_all` | Enable all locally configured MCP tools for an agent |
-| `sessions_spawn` | Spawn sub-agent task |
-| `sessions_await` | Wait for sub-agent run |
-| `sessions_list` | List sub-agent runs |
-| `sessions_cancel` | Cancel sub-agent runs |
+| `mcp_all` | Enable all locally configured MCP tools for an agent (includes filesystem tools from MCP) |
+| `subagents` | Manage sub-agent runs (`spawn`, `await`, `list`, `cancel`) |
 
 ### Access Permission Modes
-Agents and squads support two access modes for privileged tools (`fs_write`, `shell_execute`):
+Agents and squads support two access modes for privileged tools (`mcp_all`, `shell_execute`):
 - `ask_always` (default): prompt user each turn before privileged execution
 - `full_access`: execute privileged tools without per-turn prompt
+
+Note: squads created via `/create_squad` default to `full_access` + higher iteration budget for autonomous implementation workflows.
 
 Runtime enforcement is server-side in addition to UI prompts.
 
@@ -168,6 +215,7 @@ Runtime enforcement is server-side in addition to UI prompts.
 - `.cache/elevenlabs-voices.json` (voices cache)
 - `data/user-settings.json` (user settings)
 - `data/subagent-runs.json` (sub-agent runtime store in file mode)
+- `data/evolution/agents/<agent-id>/...` (`SOUL.md`, `MEMORY.md`, daily memory logs, profile, and skill snapshots)
 - `public/audio/*` (generated/cached audio files)
 
 ### Browser localStorage (client-side)
@@ -180,8 +228,8 @@ Runtime enforcement is server-side in addition to UI prompts.
 - debug toggle
 
 ### Tool-scoped workspace dirs
-`fs_*` tools default to scoped folders when relative paths are used:
-- `Cats/<agent-name>/...`
+Filesystem operations are provided by MCP filesystem tools and are scoped to the MCP service root (default: current workspace `.`).
+Squad prompts still direct artifact output under:
 - `Squads/<squad-name>/...`
 
 ## Project Layout
@@ -190,15 +238,21 @@ Runtime enforcement is server-side in addition to UI prompts.
 - `src/hooks` - Client state hooks (settings, model catalog, audio, user settings)
 - `src/lib/core` - Agent runtime, squads, tooling, sub-agent runtime
 - `src/lib/llm` - Provider registry/clients + model capability logic
-- `src/lib/tools` - Tool implementations (filesystem, shell, web, sessions)
+- `src/lib/tools` - Tool implementations (shell, web, sessions)
 - `src/lib/squads` - Blueprint parsing/serialization/instantiation
 - `src/lib/templates` - Default agents + default squad blueprints
 
 ## Security Notes
-- Runtime ops endpoint (`/api/runtime/subagents`) is open by default in non-production if `RUNTIME_ADMIN_TOKEN` is unset.
+- Runtime ops endpoints are open by default in non-production if `RUNTIME_ADMIN_TOKEN` is unset:
+  - `/api/runtime/subagents`
+  - `/api/runtime/state`
+  - `/api/runtime/tasks`
+  - `/api/runtime/observability`
 - In production, set `RUNTIME_ADMIN_TOKEN` and send it via:
   - `Authorization: Bearer <token>`
   - or `x-runtime-token: <token>`
+- Runtime Inspector can optionally send `x-runtime-token` from browser localStorage key:
+  - `cat_gpt_runtime_admin_token`
 - Do not expose this app to untrusted users without adding stronger auth/sandbox controls around shell/filesystem tooling.
 
 ## License
