@@ -51,3 +51,5 @@ package-lock.json
 /ChatGPT Export
 /data/evolution
 /prisma/migrations
+/.cache
+/.runtime
